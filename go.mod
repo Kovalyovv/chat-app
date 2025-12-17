@@ -4,7 +4,9 @@ go 1.25.4
 
 require (
 	github.com/gin-gonic/gin v1.11.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/joho/godotenv v1.5.1
 )
 
 require (
