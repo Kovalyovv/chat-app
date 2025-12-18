@@ -11,7 +11,7 @@ type Store struct {
 	Pool          *pgxpool.Pool
 	RoomRepo      *RoomRepo
 	MessageRepo   *MessageRepo
-	ReadStateRepo *ReadStateRepo
+	ChatStateRepo *ChatStateRepo
 }
 
 func New(databaseUrl string) (*Store, error) {
@@ -32,7 +32,7 @@ func New(databaseUrl string) (*Store, error) {
 		Pool:          pool,
 		RoomRepo:      NewRoomRepo(pool),
 		MessageRepo:   NewMessageRepo(pool),
-		ReadStateRepo: NewReadStateRepo(pool),
+		ChatStateRepo: NewChatStateRepo(pool),
 	}, nil
 }
 

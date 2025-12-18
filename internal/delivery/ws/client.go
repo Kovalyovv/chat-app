@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -14,14 +15,14 @@ const (
 )
 
 type Client struct {
-	UserID int
-	RoomID int
+	UserID int64
+	RoomID int64
 	Hub    *Hub
 	Conn   *websocket.Conn
 	Send   chan OutgoingMessage
 }
 
-func NewClient(userID, roomID int, conn *websocket.Conn, hub *Hub) *Client {
+func NewClient(userID, roomID int64, conn *websocket.Conn, hub *Hub) *Client {
 	return &Client{
 		UserID: userID,
 		RoomID: roomID,
@@ -89,6 +90,19 @@ func (c *Client) ReadPump() {
 				ReadUpToID: int64(upTo),
 			}
 
+		case MsgResync:
+			lastRecv, _ := msg.Payload["last_received_message_id"].(float64)
+			lastRead, _ := msg.Payload["last_read_message_id"].(float64)
+
+			c.Hub.Events <- Event{
+				Type:       EventResync,
+				RoomID:     c.RoomID,
+				UserID:     c.UserID,
+				ReadUpToID: int64(lastRead),
+				Client:     c,
+				LastRecvID: int64(lastRecv),
+			}
+
 		default:
 		}
 	}
@@ -114,7 +128,7 @@ func (c *Client) WritePump() {
 			}
 
 			if msg.Type == MsgMessage.String() && msg.MessageID != 0 {
-				c.Hub.MarkDelivered(c.UserID, c.RoomID, msg.MessageID)
+				go c.Hub.MarkDelivered(c.RoomID, c.UserID, msg.MessageID)
 			}
 
 		case <-ticker.C:
@@ -126,11 +140,50 @@ func (c *Client) WritePump() {
 	}
 }
 
-func (h *Hub) MarkDelivered(userID, roomID int, messageID int64) {
-	h.NotifyDelivered(userID, messageID)
+func (h *Hub) MarkDelivered(roomID, userID, messageID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.lastDelivered[roomID] == nil {
+		h.lastDelivered[roomID] = make(map[int64]int64)
+	}
+
+	prev := h.lastDelivered[roomID][userID]
+	if messageID <= prev {
+		return
+	}
+
+	h.lastDelivered[roomID][userID] = messageID
+
+	go func() {
+		if err := h.messageUC.UpdateDeliveryState(context.Background(), roomID, userID, messageID); err != nil {
+			log.Println("failed to save delivery state:", err)
+		}
+	}()
+
+	h.NotifyDeliveredToSender(roomID, userID, messageID)
 }
 
-func (h *Hub) NotifyDelivered(userID int, messageID int64) {
+func (h *Hub) NotifyDeliveredToSender(roomID, receiverID int64, messageID int64) {
+	h.mu.RLock()
+	senders := h.roomSenders[roomID]
+	h.mu.RUnlock()
+
+	for senderID := range senders {
+		if senderID == receiverID {
+			continue
+		}
+		h.sendToUser(senderID, OutgoingMessage{
+			Type:      MsgDelivered.String(),
+			UserID:    receiverID,
+			RoomID:    roomID,
+			MessageID: messageID,
+			Timestamp: time.Now(),
+		})
+	}
+}
+
+func (h *Hub) NotifyDelivered(userID int64, messageID int64) {
 	h.mu.RLock()
 	clients := h.clientsByUser[userID]
 	h.mu.RUnlock()

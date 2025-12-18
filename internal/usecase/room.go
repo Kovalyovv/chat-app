@@ -60,7 +60,7 @@ func (uc *RoomUseCase) GetRoomsByUser(ctx context.Context, userID int) ([]domain
 	return uc.repo.GetByUserID(ctx, userID)
 }
 
-func (uc *RoomUseCase) IsUserInRoom(ctx context.Context, userID, roomID int) (bool, error) {
+func (uc *RoomUseCase) IsUserInRoom(ctx context.Context, userID, roomID int64) (bool, error) {
 	return uc.repo.IsUserInRoom(ctx, userID, roomID)
 }
 

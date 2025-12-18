@@ -10,6 +10,7 @@ const (
 	MsgAck
 	MsgDelivered
 	MsgRead
+	MsgResync
 )
 
 func (t MessageType) String() string {
@@ -26,6 +27,8 @@ func (t MessageType) String() string {
 		return "delivered"
 	case MsgRead:
 		return "read"
+	case MsgResync:
+		return "resync"
 	default:
 		return "unknown"
 	}

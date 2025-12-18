@@ -30,13 +30,13 @@ func NewWSHandler(hub *Hub, roomUC *usecase.RoomUseCase, messageUC *usecase.Mess
 }
 
 func (h *WSHandler) Handle(c *gin.Context) {
-	userID := c.GetInt("userID")
+	userID := c.GetInt64("userID")
 	if userID == 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	roomID, err := strconv.Atoi(c.Param("roomId"))
+	roomID, err := strconv.ParseInt(c.Param("roomId"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room id"})
 		return

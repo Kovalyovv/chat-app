@@ -11,8 +11,8 @@ type OutgoingMessage struct {
 	Type        string    `json:"type"`
 	MessageID   int64     `json:"message_id,omitempty"`
 	ClientMsgID string    `json:"client_msg_id,omitempty"`
-	UserID      int       `json:"user_id,omitempty"`
-	RoomID      int       `json:"room_id,omitempty"`
+	UserID      int64     `json:"user_id,omitempty"`
+	RoomID      int64     `json:"room_id,omitempty"`
 	Payload     string    `json:"payload,omitempty"`
 	Timestamp   time.Time `json:"timestamp,omitempty"`
 }

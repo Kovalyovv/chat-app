@@ -8,4 +8,5 @@ const (
 	EventJoin
 	EventLeave
 	EventRead
+	EventResync
 )

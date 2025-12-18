@@ -12,11 +12,11 @@ import (
 type Hub struct {
 	mu sync.RWMutex
 
-	clientsByRoom map[int]map[*Client]struct{}
-	clientsByUser map[int]map[*Client]struct{}
-	roomSenders   map[int]map[int]struct{}
-
-	lastRead map[int]map[int]int64
+	clientsByRoom map[int64]map[*Client]struct{}
+	clientsByUser map[int64]map[*Client]struct{}
+	roomSenders   map[int64]map[int64]struct{}
+	lastDelivered map[int64]map[int64]int64 // roomID -> userID -> lastDeliveredID
+	lastRead      map[int64]map[int64]int64 // roomID -> userID -> lastReadID
 
 	Events    chan Event
 	messageUC *usecase.MessageUseCase
@@ -24,20 +24,22 @@ type Hub struct {
 
 type Event struct {
 	Type        EventType
-	RoomID      int
-	UserID      int
+	RoomID      int64
+	UserID      int64
 	Text        string
 	ClientMsgID string
 	Client      *Client
 	ReadUpToID  int64
+	LastRecvID  int64
 }
 
 func NewHub(messageUC *usecase.MessageUseCase) *Hub {
 	return &Hub{
-		clientsByRoom: make(map[int]map[*Client]struct{}),
-		clientsByUser: make(map[int]map[*Client]struct{}),
-		roomSenders:   make(map[int]map[int]struct{}),
-		lastRead:      make(map[int]map[int]int64),
+		clientsByRoom: make(map[int64]map[*Client]struct{}),
+		clientsByUser: make(map[int64]map[*Client]struct{}),
+		roomSenders:   make(map[int64]map[int64]struct{}),
+		lastDelivered: make(map[int64]map[int64]int64),
+		lastRead:      make(map[int64]map[int64]int64),
 		Events:        make(chan Event, 1024),
 		messageUC:     messageUC,
 	}
@@ -95,7 +97,7 @@ func (h *Hub) Run() {
 
 			h.mu.Lock()
 			if h.roomSenders[evt.RoomID] == nil {
-				h.roomSenders[evt.RoomID] = make(map[int]struct{})
+				h.roomSenders[evt.RoomID] = make(map[int64]struct{})
 			}
 			h.roomSenders[evt.RoomID][evt.UserID] = struct{}{}
 			h.mu.Unlock()
@@ -122,11 +124,14 @@ func (h *Hub) Run() {
 
 		case EventLeave:
 			h.BroadcastSystem(evt.RoomID, MsgLeave, evt.UserID)
+
+		case EventResync:
+			h.handleResync(evt)
 		}
 	}
 }
 
-func (h *Hub) BroadcastMessage(roomID int, msg OutgoingMessage) {
+func (h *Hub) BroadcastMessage(roomID int64, msg OutgoingMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -140,7 +145,7 @@ func (h *Hub) BroadcastMessage(roomID int, msg OutgoingMessage) {
 	}
 }
 
-func (h *Hub) BroadcastSystem(roomID int, t MessageType, userID int) {
+func (h *Hub) BroadcastSystem(roomID int64, t MessageType, userID int64) {
 	h.broadcast(roomID, OutgoingMessage{
 		Type:      t.String(),
 		UserID:    userID,
@@ -149,7 +154,7 @@ func (h *Hub) BroadcastSystem(roomID int, t MessageType, userID int) {
 	})
 }
 
-func (h *Hub) broadcast(roomID int, msg OutgoingMessage) {
+func (h *Hub) broadcast(roomID int64, msg OutgoingMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -168,7 +173,7 @@ func (h *Hub) handleRead(evt Event) {
 	defer h.mu.Unlock()
 
 	if h.lastRead[evt.RoomID] == nil {
-		h.lastRead[evt.RoomID] = make(map[int]int64)
+		h.lastRead[evt.RoomID] = make(map[int64]int64)
 	}
 
 	prev := h.lastRead[evt.RoomID][evt.UserID]
@@ -178,7 +183,6 @@ func (h *Hub) handleRead(evt Event) {
 
 	h.lastRead[evt.RoomID][evt.UserID] = evt.ReadUpToID
 
-	// 🔥 ВАЖНО: сохранить в БД
 	if err := h.messageUC.UpdateReadState(
 		context.Background(),
 		evt.RoomID,
@@ -191,7 +195,37 @@ func (h *Hub) handleRead(evt Event) {
 	h.broadcastRead(evt.RoomID, evt.UserID, evt.ReadUpToID)
 }
 
-func (h *Hub) broadcastRead(roomID, readerID int, upTo int64) {
+func (h *Hub) handleResync(evt Event) {
+	if evt.ReadUpToID > 0 {
+		h.handleRead(Event{
+			Type:       EventRead,
+			RoomID:     evt.RoomID,
+			UserID:     evt.UserID,
+			ReadUpToID: evt.ReadUpToID,
+		})
+	}
+
+	startAfter := evt.LastRecvID
+	msgs, err := h.messageUC.GetAfter(context.Background(), evt.RoomID, startAfter, 100)
+	if err != nil {
+		return
+	}
+
+	for _, m := range msgs {
+		evt.Client.Send <- OutgoingMessage{
+			Type:      MsgMessage.String(),
+			MessageID: m.ID,
+			UserID:    m.UserID,
+			RoomID:    m.RoomID,
+			Payload:   m.Text,
+			Timestamp: m.CreatedAt,
+		}
+
+		go h.MarkDelivered(evt.RoomID, evt.UserID, m.ID)
+	}
+}
+
+func (h *Hub) broadcastRead(roomID, readerID int64, upTo int64) {
 	h.mu.RLock()
 	senders := h.roomSenders[roomID]
 	h.mu.RUnlock()
@@ -211,7 +245,7 @@ func (h *Hub) broadcastRead(roomID, readerID int, upTo int64) {
 	}
 }
 
-func (h *Hub) sendToUser(userID int, msg OutgoingMessage) {
+func (h *Hub) sendToUser(userID int64, msg OutgoingMessage) {
 	if clients, ok := h.clientsByUser[userID]; ok {
 		for c := range clients {
 			c.Send <- msg

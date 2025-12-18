@@ -67,7 +67,7 @@ func (r *RoomRepo) GetByUserID(ctx context.Context, userID int) ([]domain.Room, 
 	return res, nil
 }
 
-func (r *RoomRepo) IsUserInRoom(ctx context.Context, userID, roomID int) (bool, error) {
+func (r *RoomRepo) IsUserInRoom(ctx context.Context, userID, roomID int64) (bool, error) {
 	var dummy int
 	err := r.pool.QueryRow(ctx,
 		`SELECT 1 FROM room_members WHERE user_id=$1 AND room_id=$2`,
