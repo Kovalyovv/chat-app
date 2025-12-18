@@ -1,5 +1,16 @@
+# Environment files
 .env
-.env.docker
-.env.local
+.env.*
+*.env
 
-.idea
+# JetBrains IDE
+.idea/
+*.iml
+*.iws
+
+# Другие распространённые
+.DS_Store
+*.log
+
+project_structure.txt
+project2txt.py
