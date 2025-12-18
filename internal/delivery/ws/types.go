@@ -11,6 +11,8 @@ const (
 	MsgDelivered
 	MsgRead
 	MsgResync
+	MsgStateUpdate
+	MsgHistory
 )
 
 func (t MessageType) String() string {
@@ -29,6 +31,8 @@ func (t MessageType) String() string {
 		return "read"
 	case MsgResync:
 		return "resync"
+	case MsgStateUpdate:
+		return "state_update"
 	default:
 		return "unknown"
 	}

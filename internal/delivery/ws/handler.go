@@ -64,7 +64,7 @@ func (h *WSHandler) Handle(c *gin.Context) {
 	if err == nil {
 		for i := len(history) - 1; i >= 0; i-- {
 			client.Send <- OutgoingMessage{
-				Type:      "history",
+				Type:      MsgHistory,
 				UserID:    history[i].UserID,
 				RoomID:    roomID,
 				Payload:   history[i].Text,

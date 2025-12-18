@@ -3,7 +3,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
+	"github.com/Kovalyovv/chat-app/internal/domain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,4 +48,18 @@ func (r *ChatStateRepo) UpsertRead(
 			updated_at = now()
 	`, roomID, userID, lastReadID)
 	return err
+}
+
+func (r *ChatStateRepo) GetState(ctx context.Context, roomID, userID int64) (domain.ChatState, error) {
+	var state domain.ChatState
+	err := r.pool.QueryRow(ctx, `
+		SELECT last_read_message_id, last_delivered_message_id
+		FROM room_read_states
+		WHERE room_id = $1 AND user_id = $2
+	`, roomID, userID).Scan(&state.LastReadMessageID, &state.LastDeliveredMessageID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ChatState{LastReadMessageID: 0, LastDeliveredMessageID: 0}, nil
+	}
+	return state, err
 }

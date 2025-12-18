@@ -127,7 +127,7 @@ func (c *Client) WritePump() {
 				return
 			}
 
-			if msg.Type == MsgMessage.String() && msg.MessageID != 0 {
+			if msg.Type == MsgMessage && msg.MessageID != 0 {
 				go c.Hub.MarkDelivered(c.RoomID, c.UserID, msg.MessageID)
 			}
 
@@ -174,7 +174,7 @@ func (h *Hub) NotifyDeliveredToSender(roomID, receiverID int64, messageID int64)
 			continue
 		}
 		h.sendToUser(senderID, OutgoingMessage{
-			Type:      MsgDelivered.String(),
+			Type:      MsgDelivered,
 			UserID:    receiverID,
 			RoomID:    roomID,
 			MessageID: messageID,
@@ -190,7 +190,7 @@ func (h *Hub) NotifyDelivered(userID int64, messageID int64) {
 
 	for c := range clients {
 		c.Send <- OutgoingMessage{
-			Type:      MsgDelivered.String(),
+			Type:      MsgDelivered,
 			MessageID: messageID,
 			Timestamp: time.Now(),
 		}

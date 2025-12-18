@@ -37,6 +37,13 @@ func (uc *MessageUseCase) GetAfter(
 	return uc.messageRepo.GetAfter(ctx, roomID, afterID, limit)
 }
 
+func (uc *MessageUseCase) GetChatState(
+	ctx context.Context,
+	roomID, userID int64,
+) (domain.ChatState, error) {
+	return uc.chatStateRepo.GetState(ctx, roomID, userID)
+}
+
 func (uc *MessageUseCase) UpdateDeliveryState(
 	ctx context.Context,
 	roomID, userID int64,

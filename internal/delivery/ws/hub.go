@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -103,7 +104,7 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 			h.BroadcastMessage(evt.RoomID, OutgoingMessage{
-				Type:      MsgMessage.String(),
+				Type:      MsgMessage,
 				MessageID: msgID,
 				UserID:    evt.UserID,
 				RoomID:    evt.RoomID,
@@ -112,7 +113,7 @@ func (h *Hub) Run() {
 			})
 
 			evt.Client.Send <- OutgoingMessage{
-				Type:        MsgAck.String(),
+				Type:        MsgAck,
 				MessageID:   msgID,
 				ClientMsgID: evt.ClientMsgID,
 			}
@@ -147,7 +148,7 @@ func (h *Hub) BroadcastMessage(roomID int64, msg OutgoingMessage) {
 
 func (h *Hub) BroadcastSystem(roomID int64, t MessageType, userID int64) {
 	h.broadcast(roomID, OutgoingMessage{
-		Type:      t.String(),
+		Type:      t,
 		UserID:    userID,
 		RoomID:    roomID,
 		Timestamp: time.Now(),
@@ -196,24 +197,35 @@ func (h *Hub) handleRead(evt Event) {
 }
 
 func (h *Hub) handleResync(evt Event) {
-	if evt.ReadUpToID > 0 {
+	ctx := context.Background()
+
+	serverState, err := h.messageUC.GetChatState(ctx, evt.RoomID, evt.UserID)
+	if err != nil {
+		log.Println("failed to get chat state:", err)
+		return
+	}
+
+	effectiveReadID := serverState.LastReadMessageID
+	if evt.ReadUpToID > effectiveReadID {
 		h.handleRead(Event{
 			Type:       EventRead,
 			RoomID:     evt.RoomID,
 			UserID:     evt.UserID,
 			ReadUpToID: evt.ReadUpToID,
 		})
+		effectiveReadID = evt.ReadUpToID
 	}
 
-	startAfter := evt.LastRecvID
-	msgs, err := h.messageUC.GetAfter(context.Background(), evt.RoomID, startAfter, 100)
+	startAfter := max(evt.LastRecvID, serverState.LastDeliveredMessageID)
+	msgs, err := h.messageUC.GetAfter(ctx, evt.RoomID, startAfter, 100)
 	if err != nil {
+		log.Println("failed to get after messages:", err)
 		return
 	}
 
 	for _, m := range msgs {
 		evt.Client.Send <- OutgoingMessage{
-			Type:      MsgMessage.String(),
+			Type:      MsgMessage,
 			MessageID: m.ID,
 			UserID:    m.UserID,
 			RoomID:    m.RoomID,
@@ -222,6 +234,23 @@ func (h *Hub) handleResync(evt Event) {
 		}
 
 		go h.MarkDelivered(evt.RoomID, evt.UserID, m.ID)
+	}
+
+	if effectiveReadID > evt.ReadUpToID {
+		evt.Client.Send <- OutgoingMessage{
+			Type:      MsgStateUpdate,
+			RoomID:    evt.RoomID,
+			Payload:   fmt.Sprintf("last_read: %d", effectiveReadID),
+			Timestamp: time.Now(),
+		}
+	}
+}
+
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	} else {
+		return b
 	}
 }
 
@@ -236,7 +265,7 @@ func (h *Hub) broadcastRead(roomID, readerID int64, upTo int64) {
 		}
 
 		h.sendToUser(senderID, OutgoingMessage{
-			Type:      MsgRead.String(),
+			Type:      MsgRead,
 			UserID:    readerID,
 			RoomID:    roomID,
 			MessageID: upTo,
