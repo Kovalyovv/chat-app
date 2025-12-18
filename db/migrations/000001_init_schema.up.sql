@@ -1,38 +1,36 @@
--- db/migrations/000001_init_schema.up.sql
-
-CREATE TABLE "users" (
-                         "id" SERIAL PRIMARY KEY,
-                         "username" VARCHAR(255) UNIQUE NOT NULL,
-                         "password_hash" VARCHAR(255) NOT NULL,
-                         "created_at" TIMESTAMPTZ NOT NULL DEFAULT (now())
+CREATE TABLE rooms (
+                       id SERIAL PRIMARY KEY,
+                       name VARCHAR(255) NOT NULL,
+                       invite_code VARCHAR(16) UNIQUE NOT NULL,
+                       owner_id INT NOT NULL,
+                       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE "rooms" (
-                         "id" SERIAL PRIMARY KEY,
-                         "name" VARCHAR(255) NOT NULL,
-                         "invite_code" VARCHAR(16) UNIQUE NOT NULL,
-                         "owner_id" INT NOT NULL,
-                         "created_at" TIMESTAMPTZ NOT NULL DEFAULT (now())
+CREATE TABLE room_members (
+                              user_id INT NOT NULL,
+                              room_id INT NOT NULL,
+                              PRIMARY KEY (user_id, room_id)
 );
 
-CREATE TABLE "room_members" (
-                                "user_id" INT NOT NULL,
-                                "room_id" INT NOT NULL,
-                                PRIMARY KEY ("user_id", "room_id")
+CREATE TABLE messages (
+                          id SERIAL PRIMARY KEY,
+                          room_id INT NOT NULL,
+                          user_id INT NOT NULL,
+                          text TEXT NOT NULL,
+                          created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE "messages" (
-                            "id" BIGSERIAL PRIMARY KEY,
-                            "content" TEXT NOT NULL,
-                            "room_id" INT NOT NULL,
-                            "user_id" INT NOT NULL,
-                            "created_at" TIMESTAMPTZ NOT NULL DEFAULT (now())
+CREATE TABLE room_read_states (
+                                  room_id INT NOT NULL,
+                                  user_id INT NOT NULL,
+                                  last_read_message_id BIGINT NOT NULL DEFAULT 0,
+                                  last_delivered_message_id BIGINT NOT NULL DEFAULT 0,
+                                  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                                  PRIMARY KEY (room_id, user_id),
+                                  FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 );
 
-ALTER TABLE "rooms" ADD FOREIGN KEY ("owner_id") REFERENCES "users" ("id");
-ALTER TABLE "room_members" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE;
-ALTER TABLE "room_members" ADD FOREIGN KEY ("room_id") REFERENCES "rooms" ("id") ON DELETE CASCADE;
-ALTER TABLE "messages" ADD FOREIGN KEY ("room_id") REFERENCES "rooms" ("id") ON DELETE CASCADE;
-ALTER TABLE "messages" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE SET NULL;
+ALTER TABLE room_members ADD FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE;
+ALTER TABLE messages ADD FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE;
 
-CREATE INDEX ON "messages" ("room_id", "created_at" DESC);
+CREATE INDEX ON messages (room_id, created_at DESC);
