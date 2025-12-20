@@ -15,7 +15,7 @@ type RoomRepo struct {
 
 func NewRoomRepo(pool *pgxpool.Pool) *RoomRepo { return &RoomRepo{pool: pool} }
 
-func (r *RoomRepo) Create(ctx context.Context, name string, ownerID int, inviteCode string) (*domain.Room, error) {
+func (r *RoomRepo) Create(ctx context.Context, name string, ownerID int64, inviteCode string) (*domain.Room, error) {
 	query := `INSERT INTO rooms (name, owner_id, invite_code) VALUES ($1, $2, $3)
               RETURNING id, name, owner_id, invite_code, created_at`
 	var rm domain.Room
@@ -28,7 +28,7 @@ func (r *RoomRepo) Create(ctx context.Context, name string, ownerID int, inviteC
 	return &rm, nil
 }
 
-func (r *RoomRepo) AddMember(ctx context.Context, userID, roomID int) error {
+func (r *RoomRepo) AddMember(ctx context.Context, userID, roomID int64) error {
 	_, err := r.pool.Exec(ctx, `INSERT INTO room_members (user_id, room_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, roomID)
 	return err
 }
@@ -41,7 +41,7 @@ func (r *RoomRepo) FindByInviteCode(ctx context.Context, code string) (*domain.R
 	return &rm, err
 }
 
-func (r *RoomRepo) FindByID(ctx context.Context, id int) (*domain.Room, error) {
+func (r *RoomRepo) FindByID(ctx context.Context, id int64) (*domain.Room, error) {
 	var rm domain.Room
 	err := r.pool.QueryRow(ctx, `SELECT id, name, owner_id, invite_code, created_at FROM rooms WHERE id=$1`, id).Scan(
 		&rm.ID, &rm.Name, &rm.OwnerID, &rm.InviteCode, &rm.CreatedAt,
@@ -49,7 +49,7 @@ func (r *RoomRepo) FindByID(ctx context.Context, id int) (*domain.Room, error) {
 	return &rm, err
 }
 
-func (r *RoomRepo) GetByUserID(ctx context.Context, userID int) ([]domain.Room, error) {
+func (r *RoomRepo) GetByUserID(ctx context.Context, userID int64) ([]domain.Room, error) {
 	rows, err := r.pool.Query(ctx, `SELECT r.id, r.name, r.owner_id, r.invite_code, r.created_at FROM rooms r JOIN room_members rm ON r.id = rm.room_id WHERE rm.user_id = $1`, userID)
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (r *RoomRepo) GetByUserID(ctx context.Context, userID int) ([]domain.Room, 
 }
 
 func (r *RoomRepo) IsUserInRoom(ctx context.Context, userID, roomID int64) (bool, error) {
-	var dummy int
+	var dummy int64
 	err := r.pool.QueryRow(ctx,
 		`SELECT 1 FROM room_members WHERE user_id=$1 AND room_id=$2`,
 		userID, roomID,

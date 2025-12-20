@@ -22,7 +22,7 @@ type createRoomReq struct {
 }
 
 type joinRoomReq struct {
-	RoomID     int    `json:"room_id" binding:"required"`
+	RoomID     int64  `json:"room_id" binding:"required"`
 	InviteCode string `json:"invite_code" binding:"required"`
 }
 
@@ -38,7 +38,7 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found in context"})
 		return
 	}
-	userID := userIDIface.(int)
+	userID := userIDIface.(int64)
 
 	room, err := h.uc.CreateRoom(c.Request.Context(), req.Name, userID)
 	if err != nil {
@@ -61,7 +61,7 @@ func (h *RoomHandler) JoinRoom(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found in context"})
 		return
 	}
-	userID := userIDIface.(int)
+	userID := userIDIface.(int64)
 
 	room, err := h.uc.JoinRoom(c.Request.Context(), userID, req.RoomID, req.InviteCode)
 	if err != nil {
@@ -78,7 +78,7 @@ func (h *RoomHandler) GetRooms(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found in context"})
 		return
 	}
-	userID := userIDIface.(int)
+	userID := userIDIface.(int64)
 
 	rooms, err := h.uc.GetRoomsByUser(c.Request.Context(), userID)
 	if err != nil {

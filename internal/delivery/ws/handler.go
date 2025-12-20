@@ -58,22 +58,22 @@ func (h *WSHandler) Handle(c *gin.Context) {
 	}
 
 	client := NewClient(userID, roomID, conn, h.Hub)
-
 	h.Hub.Register(client)
+
+	go client.WritePump()
 	history, err := h.MessageUC.History(c.Request.Context(), roomID, 50)
 	if err == nil {
 		for i := len(history) - 1; i >= 0; i-- {
 			client.Send <- OutgoingMessage{
 				Type:      MsgHistory,
 				UserID:    history[i].UserID,
+				MessageID: history[i].ID,
 				RoomID:    roomID,
 				Payload:   history[i].Text,
-				Timestamp: history[i].CreatedAt,
+				Timestamp: history[i].CreatedAt.Unix(),
 			}
 		}
 	}
-	h.Hub.BroadcastSystem(roomID, MsgJoin, userID)
 
-	go client.WritePump()
 	client.ReadPump()
 }
