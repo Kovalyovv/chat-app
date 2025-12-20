@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -80,18 +79,17 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 	pool, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	store := &postgres.Store{
-		Pool:          pool,
-		RoomRepo:      postgres.NewRoomRepo(pool),
-		MessageRepo:   postgres.NewMessageRepo(pool),
-		ChatStateRepo: postgres.NewChatStateRepo(pool),
-	}
+	roomRepo := postgres.NewRoomRepo(pool)
+	messageRepo := postgres.NewMessageRepo(pool)
+	chatStateRepo := postgres.NewChatStateRepo(pool)
 
-	roomUC := usecase.NewRoomUseCase(store)
-	messageUC := usecase.NewMessageUseCase(store)
+	roomUC := usecase.NewRoomUseCase(roomRepo)
+	messageUC := usecase.NewMessageUseCase(messageRepo, chatStateRepo)
 
 	hub := ws.NewHub(messageUC)
-	go hub.Run()
+	hubCtx, cancelHub := context.WithCancel(context.Background())
+	defer cancelHub()
+	go hub.Run(hubCtx)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -115,28 +113,27 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 	room, err := roomUC.CreateRoom(ctx, "test-room", 1)
 	require.NoError(t, err)
 
-	require.NoError(t, store.RoomRepo.AddMember(ctx, 1, room.ID))
-	require.NoError(t, store.RoomRepo.AddMember(ctx, 2, room.ID))
+	require.NoError(t, roomRepo.AddMember(ctx, 1, room.ID))
+	require.NoError(t, roomRepo.AddMember(ctx, 2, room.ID))
 
 	wsURL := "ws" + ts.URL[4:] + fmt.Sprintf("/api/v1/ws/%d", room.ID)
 
-	// Подключение клиентов
 	conn1, _, err := websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=1", nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { conn1.Close() })
+	t.Cleanup(func() { _ = conn1.Close() })
 
 	conn2, _, err := websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=2", nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { conn2.Close() })
+	t.Cleanup(func() { _ = conn2.Close() })
 
-	time.Sleep(200 * time.Millisecond) // небольшая пауза после подключения
+	time.Sleep(200 * time.Millisecond)
 
 	sendMessage(t, conn1, "привет", "msg-1")
 
 	msg := readExpectedMessage(t, conn2, ws.MsgMessage)
 	assert.Equal(t, "привет", msg.Payload)
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	state, err := messageUC.GetChatState(ctx, room.ID, 2)
 	require.NoError(t, err)
@@ -147,10 +144,10 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 	readMsg := readExpectedMessage(t, conn1, ws.MsgRead)
 	assert.Equal(t, int64(2), readMsg.UserID)
 
-	conn2.Close()
+	_ = conn2.Close()
 	conn2, _, err = websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=2", nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { conn2.Close() })
+	t.Cleanup(func() { _ = conn2.Close() })
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -189,17 +186,12 @@ func sendResync(t *testing.T, conn *websocket.Conn, lastRecv, lastRead int64) {
 
 func readExpectedMessage(t *testing.T, conn *websocket.Conn, expected ws.MessageType) ws.OutgoingMessage {
 	t.Helper()
-
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 
 	for {
 		var msg ws.OutgoingMessage
-		if err := conn.ReadJSON(&msg); err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				t.Fatalf("timeout waiting for message type %s", expected)
-			}
-			t.Fatalf("read error: %v", err)
-		}
+		err := conn.ReadJSON(&msg)
+		require.NoError(t, err, "Failed to read JSON from websocket")
 
 		if msg.Type == expected {
 			return msg
@@ -209,7 +201,6 @@ func readExpectedMessage(t *testing.T, conn *websocket.Conn, expected ws.Message
 
 func setupTestDB(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
-
 	ctx := context.Background()
 
 	pgContainer, err := psqlTest.Run(ctx,
@@ -234,33 +225,8 @@ func setupTestDB(t *testing.T) (*pgxpool.Pool, func()) {
 	_, err = pool.Exec(ctx, testDDL)
 	require.NoError(t, err)
 
-	cleanup := func() {
+	return pool, func() {
 		pool.Close()
 		_ = pgContainer.Terminate(ctx)
 	}
-
-	return pool, cleanup
 }
-
-//func readExpectedMessage(t *testing.T, conn *websocket.Conn, expected ws.MessageType) ws.OutgoingMessage {
-//	t.Helper()
-//
-//	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-//		t.Fatalf("set read deadline failed: %v", err)
-//	}
-//
-//	for {
-//		var msg ws.OutgoingMessage
-//		err := conn.ReadJSON(&msg)
-//		if err != nil {
-//			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-//				t.Fatalf("timeout waiting for %s", expected)
-//			}
-//			t.Fatalf("websocket read failed: %v", err)
-//		}
-//
-//		if msg.Type == expected {
-//			return msg
-//		}
-//	}
-//}

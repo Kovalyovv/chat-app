@@ -13,11 +13,12 @@ import (
 type Hub struct {
 	mu sync.RWMutex
 
+	// Maps for routing
 	clientsByRoom map[int64]map[*Client]struct{}
 	clientsByUser map[int64]map[*Client]struct{}
-	roomSenders   map[int64]map[int64]struct{}
-	lastDelivered map[int64]map[int64]int64 // roomID -> userID -> lastDeliveredID
-	lastRead      map[int64]map[int64]int64 // roomID -> userID -> lastReadID
+
+	// Track active room participants for "Read" broadcasts
+	roomSenders map[int64]map[int64]struct{}
 
 	Events    chan Event
 	messageUC *usecase.MessageUseCase
@@ -39,8 +40,6 @@ func NewHub(messageUC *usecase.MessageUseCase) *Hub {
 		clientsByRoom: make(map[int64]map[*Client]struct{}),
 		clientsByUser: make(map[int64]map[*Client]struct{}),
 		roomSenders:   make(map[int64]map[int64]struct{}),
-		lastDelivered: make(map[int64]map[int64]int64),
-		lastRead:      make(map[int64]map[int64]int64),
 		Events:        make(chan Event, 1024),
 		messageUC:     messageUC,
 	}
@@ -80,75 +79,39 @@ func (h *Hub) Unregister(c *Client) {
 	}
 }
 
-func (h *Hub) Run() {
+func (h *Hub) Run(ctx context.Context) {
 	log.Println("Hub.Run started")
-	for evt := range h.Events {
-		switch evt.Type {
-		case EventMessage:
-			h.handleMessage(evt)
-		case EventRead:
-			h.handleRead(evt)
-		case EventResync:
-			h.handleResync(evt)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Hub stopping...")
+			return
+		case evt := <-h.Events:
+			// Process events in goroutines to prevent Hub blockage
+			switch evt.Type {
+			case EventMessage:
+				go h.handleMessage(evt)
+			case EventRead:
+				go h.handleRead(evt)
+			case EventResync:
+				go h.handleResync(evt)
+			}
 		}
-	}
-}
-
-func (h *Hub) handleRead(evt Event) {
-	ctx := context.Background()
-
-	h.mu.Lock()
-
-	if h.lastRead[evt.RoomID] == nil {
-		h.lastRead[evt.RoomID] = make(map[int64]int64)
-	}
-
-	prev := h.lastRead[evt.RoomID][evt.UserID]
-	if evt.ReadUpToID <= prev {
-		h.mu.Unlock()
-		log.Println("handleRead skipped, upTo <= prev")
-		return
-	}
-
-	h.lastRead[evt.RoomID][evt.UserID] = evt.ReadUpToID
-
-	senders := snapshotSenders(h.roomSenders[evt.RoomID])
-	h.mu.Unlock()
-
-	_ = h.messageUC.UpdateReadState(ctx, evt.RoomID, evt.UserID, evt.ReadUpToID)
-
-	for senderID := range senders {
-		if senderID == evt.UserID {
-			continue
-		}
-		h.sendToUser(senderID, OutgoingMessage{
-			Type:      MsgRead,
-			UserID:    evt.UserID,
-			RoomID:    evt.RoomID,
-			MessageID: evt.ReadUpToID,
-			Timestamp: time.Now().Unix(),
-		})
 	}
 }
 
 func (h *Hub) handleMessage(evt Event) {
-	ctx := context.Background()
+	// 1. Persist to DB first
+	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	msgID, err := h.messageUC.Save(ctx, evt.RoomID, evt.UserID, evt.Text)
+	msgID, err := h.messageUC.Save(dbCtx, evt.RoomID, evt.UserID, evt.Text)
 	if err != nil {
-		log.Println("save message error:", err)
+		log.Printf("[ERROR] failed to save message: %v", err)
 		return
 	}
 
-	h.mu.Lock()
-	if h.roomSenders[evt.RoomID] == nil {
-		h.roomSenders[evt.RoomID] = make(map[int64]struct{})
-	}
-	h.roomSenders[evt.RoomID][evt.UserID] = struct{}{}
-
-	clients := snapshotClients(h.clientsByRoom[evt.RoomID])
-	h.mu.Unlock()
-
+	// 2. Prepare Outgoing Message
 	out := OutgoingMessage{
 		Type:      MsgMessage,
 		MessageID: msgID,
@@ -158,19 +121,34 @@ func (h *Hub) handleMessage(evt Event) {
 		Timestamp: time.Now().Unix(),
 	}
 
+	// 3. Broadcast to Room
+	h.mu.RLock()
+	clients := snapshotClients(h.clientsByRoom[evt.RoomID])
+
+	// Add sender to active room participants
+	h.mu.RUnlock()
+	h.mu.Lock()
+	if h.roomSenders[evt.RoomID] == nil {
+		h.roomSenders[evt.RoomID] = make(map[int64]struct{})
+	}
+	h.roomSenders[evt.RoomID][evt.UserID] = struct{}{}
+	h.mu.Unlock()
+
 	for _, c := range clients {
 		select {
 		case c.Send <- out:
 			if c.UserID != evt.UserID {
-				_ = h.messageUC.UpdateDeliveryState(
-					ctx, evt.RoomID, c.UserID, msgID,
-				)
+				// Update delivery state asynchronously
+				go func(uid int64) {
+					_ = h.messageUC.UpdateDeliveryState(context.Background(), evt.RoomID, uid, msgID)
+				}(c.UserID)
 			}
 		default:
-			log.Printf("send buffer full for user %d", c.UserID)
+			log.Printf("Send buffer full for user %d", c.UserID)
 		}
 	}
 
+	// 4. Send Ack to Sender
 	trySend(evt.Client, OutgoingMessage{
 		Type:        MsgAck,
 		MessageID:   msgID,
@@ -178,21 +156,41 @@ func (h *Hub) handleMessage(evt Event) {
 	})
 }
 
+func (h *Hub) handleRead(evt Event) {
+	dbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := h.messageUC.UpdateReadState(dbCtx, evt.RoomID, evt.UserID, evt.ReadUpToID)
+	if err != nil {
+		return
+	}
+
+	// Broadcast read status only to people who have sent messages in this room
+	h.mu.RLock()
+	senders := snapshotSenders(h.roomSenders[evt.RoomID])
+	h.mu.RUnlock()
+
+	msg := OutgoingMessage{
+		Type:      MsgRead,
+		UserID:    evt.UserID,
+		RoomID:    evt.RoomID,
+		MessageID: evt.ReadUpToID,
+		Timestamp: time.Now().Unix(),
+	}
+
+	for senderID := range senders {
+		if senderID != evt.UserID {
+			h.sendToUser(senderID, msg)
+		}
+	}
+}
+
 func (h *Hub) handleResync(evt Event) {
-	ctx := context.Background()
+	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	state, err := h.messageUC.GetChatState(ctx, evt.RoomID, evt.UserID)
-	if err != nil {
-		log.Println("get state error:", err)
-		return
-	}
-
-	startAfter := evt.LastRecvID
-	msgs, err := h.messageUC.GetAfter(ctx, evt.RoomID, startAfter, 100)
-	if err != nil {
-		log.Println("get after error:", err)
-		return
-	}
+	state, _ := h.messageUC.GetChatState(dbCtx, evt.RoomID, evt.UserID)
+	msgs, _ := h.messageUC.GetAfter(dbCtx, evt.RoomID, evt.LastRecvID, 100)
 
 	for _, m := range msgs {
 		trySend(evt.Client, OutgoingMessage{
@@ -203,8 +201,6 @@ func (h *Hub) handleResync(evt Event) {
 			Payload:   m.Text,
 			Timestamp: m.CreatedAt.Unix(),
 		})
-
-		_ = h.messageUC.UpdateDeliveryState(ctx, evt.RoomID, evt.UserID, m.ID)
 	}
 
 	if state.LastReadMessageID > evt.ReadUpToID {
@@ -217,27 +213,21 @@ func (h *Hub) handleResync(evt Event) {
 	}
 }
 
-func (h *Hub) broadcastRead(roomID, readerID int64, upTo int64) {
+func (h *Hub) sendToUser(userID int64, msg OutgoingMessage) {
 	h.mu.RLock()
-	senders := h.roomSenders[roomID]
+	clients := snapshotClients(h.clientsByUser[userID])
 	h.mu.RUnlock()
 
-	for senderID := range senders {
-		if senderID == readerID {
-			continue
-		}
-
-		h.sendToUser(senderID, OutgoingMessage{
-			Type:      MsgRead,
-			UserID:    readerID,
-			RoomID:    roomID,
-			MessageID: upTo,
-			Timestamp: time.Now().Unix(),
-		})
+	for _, c := range clients {
+		trySend(c, msg)
 	}
 }
 
+// Helpers unchanged but kept for completeness
 func trySend(c *Client, msg OutgoingMessage) {
+	if c == nil {
+		return
+	}
 	select {
 	case c.Send <- msg:
 	default:
@@ -258,21 +248,4 @@ func snapshotSenders(src map[int64]struct{}) map[int64]struct{} {
 		res[k] = struct{}{}
 	}
 	return res
-}
-
-func (h *Hub) sendToUser(userID int64, msg OutgoingMessage) {
-	h.mu.RLock()
-	clients := snapshotClients(h.clientsByUser[userID])
-	h.mu.RUnlock()
-
-	for _, c := range clients {
-		trySend(c, msg)
-	}
-}
-
-func max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

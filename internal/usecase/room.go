@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/Kovalyovv/chat-app/internal/domain"
-	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 )
 
 const (
@@ -17,11 +16,11 @@ const (
 )
 
 type RoomUseCase struct {
-	repo *postgres.RoomRepo
+	repo RoomRepository
 }
 
-func NewRoomUseCase(store *postgres.Store) *RoomUseCase {
-	return &RoomUseCase{repo: store.RoomRepo}
+func NewRoomUseCase(repo RoomRepository) *RoomUseCase {
+	return &RoomUseCase{repo: repo}
 }
 
 func (uc *RoomUseCase) CreateRoom(ctx context.Context, name string, ownerID int64) (*domain.Room, error) {

@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -58,11 +59,13 @@ func (h *WSHandler) Handle(c *gin.Context) {
 	}
 
 	client := NewClient(userID, roomID, conn, h.Hub)
+
 	h.Hub.Register(client)
 
 	go client.WritePump()
-	history, err := h.MessageUC.History(c.Request.Context(), roomID, 50)
-	if err == nil {
+
+	go func() {
+		history, _ := h.MessageUC.History(context.Background(), roomID, 50)
 		for i := len(history) - 1; i >= 0; i-- {
 			client.Send <- OutgoingMessage{
 				Type:      MsgHistory,
@@ -73,7 +76,7 @@ func (h *WSHandler) Handle(c *gin.Context) {
 				Timestamp: history[i].CreatedAt.Unix(),
 			}
 		}
-	}
+	}()
 
 	client.ReadPump()
 }
