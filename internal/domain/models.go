@@ -3,9 +3,9 @@ package domain
 import "time"
 
 type Room struct {
-	ID         int       `json:"id"`
+	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
-	OwnerID    int       `json:"ownerId"`
+	OwnerID    int64     `json:"ownerId"`
 	InviteCode string    `json:"inviteCode"`
 	CreatedAt  time.Time `json:"createdAt"`
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/Kovalyovv/chat-app/internal/domain"
-	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 )
 
 const (
@@ -17,14 +16,14 @@ const (
 )
 
 type RoomUseCase struct {
-	repo *postgres.RoomRepo
+	repo RoomRepository
 }
 
-func NewRoomUseCase(store *postgres.Store) *RoomUseCase {
-	return &RoomUseCase{repo: store.RoomRepo}
+func NewRoomUseCase(repo RoomRepository) *RoomUseCase {
+	return &RoomUseCase{repo: repo}
 }
 
-func (uc *RoomUseCase) CreateRoom(ctx context.Context, name string, ownerID int) (*domain.Room, error) {
+func (uc *RoomUseCase) CreateRoom(ctx context.Context, name string, ownerID int64) (*domain.Room, error) {
 	code, err := generateInviteCode()
 	if err != nil {
 		return nil, err
@@ -42,7 +41,7 @@ func (uc *RoomUseCase) CreateRoom(ctx context.Context, name string, ownerID int)
 	return room, nil
 }
 
-func (uc *RoomUseCase) JoinRoom(ctx context.Context, userID int, roomID int, inviteCode string) (*domain.Room, error) {
+func (uc *RoomUseCase) JoinRoom(ctx context.Context, userID int64, roomID int64, inviteCode string) (*domain.Room, error) {
 	room, err := uc.repo.FindByID(ctx, roomID)
 	if err != nil {
 		return nil, err
@@ -56,7 +55,7 @@ func (uc *RoomUseCase) JoinRoom(ctx context.Context, userID int, roomID int, inv
 	return room, nil
 }
 
-func (uc *RoomUseCase) GetRoomsByUser(ctx context.Context, userID int) ([]domain.Room, error) {
+func (uc *RoomUseCase) GetRoomsByUser(ctx context.Context, userID int64) ([]domain.Room, error) {
 	return uc.repo.GetByUserID(ctx, userID)
 }
 

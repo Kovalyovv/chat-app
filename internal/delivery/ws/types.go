@@ -4,6 +4,7 @@ type MessageType uint8
 
 const (
 	MsgUnknown MessageType = iota
+	MsgSend
 	MsgMessage
 	MsgJoin
 	MsgLeave
@@ -19,6 +20,8 @@ func (t MessageType) String() string {
 	switch t {
 	case MsgMessage:
 		return "message"
+	case MsgSend:
+		return "send"
 	case MsgJoin:
 		return "join"
 	case MsgLeave:

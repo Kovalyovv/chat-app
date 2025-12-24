@@ -11,7 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func NewServer(cfg *config.Config, roomUC *usecase.RoomUseCase, messageUC *usecase.MessageUseCase, authMW gin.HandlerFunc, l *logger.Logger) *http.Server {
+func NewServer(
+	cfg *config.Config,
+	roomUC *usecase.RoomUseCase,
+	messageUC *usecase.MessageUseCase,
+	authMW gin.HandlerFunc,
+	l *logger.Logger,
+	hub *ws.Hub,
+) *http.Server {
 	router := gin.New()
 	router.Use(gin.Recovery())
 
@@ -31,14 +38,11 @@ func NewServer(cfg *config.Config, roomUC *usecase.RoomUseCase, messageUC *useca
 	}
 
 	{
-		hub := ws.NewHub(messageUC)
 		wsHandler := ws.NewWSHandler(hub, roomUC, messageUC)
 
 		wsGroup := api.Group("/ws")
 		wsGroup.Use(authMW)
 		wsGroup.GET("/:roomId", wsHandler.Handle)
-
-		go hub.Run()
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.API.Port)

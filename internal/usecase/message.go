@@ -4,16 +4,15 @@ import (
 	"context"
 
 	"github.com/Kovalyovv/chat-app/internal/domain"
-	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 )
 
 type MessageUseCase struct {
-	messageRepo   *postgres.MessageRepo
-	chatStateRepo *postgres.ChatStateRepo
+	messageRepo   MessageRepository
+	chatStateRepo ChatStateRepository
 }
 
-func NewMessageUseCase(store *postgres.Store) *MessageUseCase {
-	return &MessageUseCase{messageRepo: store.MessageRepo, chatStateRepo: store.ChatStateRepo}
+func NewMessageUseCase(mRepo MessageRepository, sRepo ChatStateRepository) *MessageUseCase {
+	return &MessageUseCase{messageRepo: mRepo, chatStateRepo: sRepo}
 }
 
 func (uc *MessageUseCase) Save(

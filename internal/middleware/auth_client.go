@@ -1,33 +1,46 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
-	"strconv"
+	"strings"
 
+	"github.com/Kovalyovv/auth-service/pkg/pb"
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-// NewAuthMiddleware returns a middleware that expects header "X-User-ID" with integer user id.
-// Later this middleware will call Auth Service via gRPC to validate Authorization header.
-func NewAuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// For now: support X-User-ID for local testing
-		if uid := c.GetHeader("X-User-ID"); uid != "" {
-			if id, err := strconv.Atoi(uid); err == nil {
-				c.Set("userID", id)
-				c.Next()
-				return
-			}
-		}
+func NewAuthMiddleware(authServiceAddr string) gin.HandlerFunc {
+	conn, err := grpc.Dial(authServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic("could not connect to auth service: " + err.Error())
+	}
+	client := pb.NewAuthServiceClient(conn)
 
-		// Fallback: try Authorization Bearer token - currently reject (until Auth gRPC implemented)
+	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authorization required (X-User-ID for local)"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			return
 		}
 
-		// TODO: call Auth Service via gRPC to verify token and set userID
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token validation not implemented yet"})
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token format"})
+			return
+		}
+
+		resp, err := client.VerifyToken(context.Background(), &pb.VerifyTokenRequest{
+			Token: parts[1],
+		})
+
+		if err != nil || !resp.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+			return
+		}
+
+		c.Set("userID", resp.UserId)
+		c.Next()
 	}
 }
