@@ -13,11 +13,9 @@ import (
 type Hub struct {
 	mu sync.RWMutex
 
-	// Maps for routing
 	clientsByRoom map[int64]map[*Client]struct{}
 	clientsByUser map[int64]map[*Client]struct{}
 
-	// Track active room participants for "Read" broadcasts
 	roomSenders map[int64]map[int64]struct{}
 
 	Events    chan Event
@@ -87,7 +85,6 @@ func (h *Hub) Run(ctx context.Context) {
 			log.Println("Hub stopping...")
 			return
 		case evt := <-h.Events:
-			// Process events in goroutines to prevent Hub blockage
 			switch evt.Type {
 			case EventMessage:
 				go h.handleMessage(evt)
@@ -101,7 +98,6 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) handleMessage(evt Event) {
-	// 1. Persist to DB first
 	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -111,7 +107,6 @@ func (h *Hub) handleMessage(evt Event) {
 		return
 	}
 
-	// 2. Prepare Outgoing Message
 	out := OutgoingMessage{
 		Type:      MsgMessage,
 		MessageID: msgID,
@@ -121,11 +116,9 @@ func (h *Hub) handleMessage(evt Event) {
 		Timestamp: time.Now().Unix(),
 	}
 
-	// 3. Broadcast to Room
 	h.mu.RLock()
 	clients := snapshotClients(h.clientsByRoom[evt.RoomID])
 
-	// Add sender to active room participants
 	h.mu.RUnlock()
 	h.mu.Lock()
 	if h.roomSenders[evt.RoomID] == nil {
@@ -138,7 +131,6 @@ func (h *Hub) handleMessage(evt Event) {
 		select {
 		case c.Send <- out:
 			if c.UserID != evt.UserID {
-				// Update delivery state asynchronously
 				go func(uid int64) {
 					_ = h.messageUC.UpdateDeliveryState(context.Background(), evt.RoomID, uid, msgID)
 				}(c.UserID)
@@ -148,7 +140,6 @@ func (h *Hub) handleMessage(evt Event) {
 		}
 	}
 
-	// 4. Send Ack to Sender
 	trySend(evt.Client, OutgoingMessage{
 		Type:        MsgAck,
 		MessageID:   msgID,
@@ -165,7 +156,6 @@ func (h *Hub) handleRead(evt Event) {
 		return
 	}
 
-	// Broadcast read status only to people who have sent messages in this room
 	h.mu.RLock()
 	senders := snapshotSenders(h.roomSenders[evt.RoomID])
 	h.mu.RUnlock()
@@ -223,7 +213,6 @@ func (h *Hub) sendToUser(userID int64, msg OutgoingMessage) {
 	}
 }
 
-// Helpers unchanged but kept for completeness
 func trySend(c *Client, msg OutgoingMessage) {
 	if c == nil {
 		return

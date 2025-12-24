@@ -1,4 +1,3 @@
-// cmd/api/main.go
 package main
 
 import (
@@ -37,7 +36,7 @@ func main() {
 
 	go hub.Run(ctx)
 
-	authMW := middleware.NewAuthMiddleware()
+	authMW := middleware.NewAuthMiddleware(cfg.AuthService.Addr)
 	srv := httpDelivery.NewServer(cfg, roomUC, messageUC, authMW, logr, hub)
 
 	go func() {

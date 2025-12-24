@@ -13,11 +13,14 @@ type Config struct {
 	Database struct {
 		URL string
 	}
+	AuthService struct {
+		Addr string
+	}
 	GinMode string
 }
 
 func NewFromEnv() *Config {
-	_ = godotenv.Load() // читает .env, ошибки можно игнорировать
+	_ = godotenv.Load()
 
 	cfg := &Config{
 		API: struct{ Port string }{
@@ -26,11 +29,17 @@ func NewFromEnv() *Config {
 		Database: struct{ URL string }{
 			URL: os.Getenv("DB_URL"),
 		},
+		AuthService: struct{ Addr string }{
+			Addr: os.Getenv("AUTH_SERVICE_ADDR"),
+		},
 		GinMode: os.Getenv("GIN_MODE"),
 	}
 
 	if cfg.API.Port == "" {
 		cfg.API.Port = "8080"
+	}
+	if cfg.AuthService.Addr == "" {
+		cfg.AuthService.Addr = "localhost:50001"
 	}
 	if cfg.GinMode == "" {
 		cfg.GinMode = "debug"
