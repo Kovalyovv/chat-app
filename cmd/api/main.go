@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -10,43 +13,45 @@ import (
 	"github.com/Kovalyovv/chat-app/internal/config"
 	httpDelivery "github.com/Kovalyovv/chat-app/internal/delivery/http"
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
-	"github.com/Kovalyovv/chat-app/internal/logger"
 	"github.com/Kovalyovv/chat-app/internal/middleware"
 	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
 )
 
 func main() {
-	logr := logger.New()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	cfg := config.NewFromEnv()
 
 	store, err := postgres.New(cfg.Database.URL)
 	if err != nil {
-		logr.Fatalf("db connection failed: %v", err)
+		slog.Error("db connection failed", "error", err)
+		os.Exit(1)
 	}
 	defer store.Close()
 
 	roomUC := usecase.NewRoomUseCase(store.RoomRepo)
 	messageUC := usecase.NewMessageUseCase(store.MessageRepo, store.ChatStateRepo)
 
-	hub := ws.NewHub(messageUC)
+	hub := ws.NewHub(messageUC, logger.With("component", "hub"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go hub.Run(ctx)
 
-	authMW := middleware.NewAuthMiddleware(cfg.AuthService.Addr)
-	srv := httpDelivery.NewServer(cfg, roomUC, messageUC, authMW, logr, hub)
+	authMW := middleware.NewAuthMiddleware(cfg.AuthService.Addr, logger)
+	srv := httpDelivery.NewServer(cfg, roomUC, messageUC, authMW, logger, hub)
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logr.Fatalf("listen error: %v", err)
+		slog.Info("starting HTTP server", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("http server error", "error", err)
 		}
 	}()
 
 	<-ctx.Done()
-	logr.Info("Shutting down gracefully...")
+	slog.Info("shutting down gracefully")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

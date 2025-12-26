@@ -2,11 +2,11 @@ package http
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/Kovalyovv/chat-app/internal/config"
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
-	"github.com/Kovalyovv/chat-app/internal/logger"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
 	"github.com/gin-gonic/gin"
 )
@@ -16,7 +16,7 @@ func NewServer(
 	roomUC *usecase.RoomUseCase,
 	messageUC *usecase.MessageUseCase,
 	authMW gin.HandlerFunc,
-	l *logger.Logger,
+	logger *slog.Logger,
 	hub *ws.Hub,
 ) *http.Server {
 	router := gin.New()
@@ -29,7 +29,7 @@ func NewServer(
 	api := router.Group("/api/v1")
 
 	{
-		rh := NewRoomHandler(roomUC, l)
+		rh := NewRoomHandler(roomUC, logger.With("handler", "room"))
 		rooms := api.Group("/rooms")
 		rooms.Use(authMW)
 		rooms.POST("", rh.CreateRoom)
@@ -38,8 +38,7 @@ func NewServer(
 	}
 
 	{
-		wsHandler := ws.NewWSHandler(hub, roomUC, messageUC)
-
+		wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, logger.With("handler", "ws"))
 		wsGroup := api.Group("/ws")
 		wsGroup.Use(authMW)
 		wsGroup.GET("/:roomId", wsHandler.Handle)

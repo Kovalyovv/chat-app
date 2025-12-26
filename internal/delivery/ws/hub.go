@@ -3,7 +3,7 @@ package ws
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -11,35 +11,23 @@ import (
 )
 
 type Hub struct {
-	mu sync.RWMutex
-
+	mu            sync.RWMutex
 	clientsByRoom map[int64]map[*Client]struct{}
 	clientsByUser map[int64]map[*Client]struct{}
-
-	roomSenders map[int64]map[int64]struct{}
-
-	Events    chan Event
-	messageUC *usecase.MessageUseCase
+	roomSenders   map[int64]map[int64]struct{}
+	Events        chan Event
+	messageUC     *usecase.MessageUseCase
+	log           *slog.Logger
 }
 
-type Event struct {
-	Type        EventType
-	RoomID      int64
-	UserID      int64
-	Text        string
-	ClientMsgID string
-	Client      *Client
-	ReadUpToID  int64
-	LastRecvID  int64
-}
-
-func NewHub(messageUC *usecase.MessageUseCase) *Hub {
+func NewHub(messageUC *usecase.MessageUseCase, logger *slog.Logger) *Hub {
 	return &Hub{
 		clientsByRoom: make(map[int64]map[*Client]struct{}),
 		clientsByUser: make(map[int64]map[*Client]struct{}),
 		roomSenders:   make(map[int64]map[int64]struct{}),
 		Events:        make(chan Event, 1024),
 		messageUC:     messageUC,
+		log:           logger,
 	}
 }
 
@@ -78,11 +66,11 @@ func (h *Hub) Unregister(c *Client) {
 }
 
 func (h *Hub) Run(ctx context.Context) {
-	log.Println("Hub.Run started")
+	h.log.Info("hub started")
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Hub stopping...")
+			h.log.Info("hub stopping")
 			return
 		case evt := <-h.Events:
 			switch evt.Type {
@@ -98,12 +86,9 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) handleMessage(evt Event) {
-	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	msgID, err := h.messageUC.Save(dbCtx, evt.RoomID, evt.UserID, evt.Text)
+	msgID, err := h.messageUC.Save(evt.Context, evt.RoomID, evt.UserID, evt.Text)
 	if err != nil {
-		log.Printf("[ERROR] failed to save message: %v", err)
+		h.log.Error("failed to save message", "error", err)
 		return
 	}
 
@@ -118,8 +103,8 @@ func (h *Hub) handleMessage(evt Event) {
 
 	h.mu.RLock()
 	clients := snapshotClients(h.clientsByRoom[evt.RoomID])
-
 	h.mu.RUnlock()
+
 	h.mu.Lock()
 	if h.roomSenders[evt.RoomID] == nil {
 		h.roomSenders[evt.RoomID] = make(map[int64]struct{})
@@ -132,11 +117,20 @@ func (h *Hub) handleMessage(evt Event) {
 		case c.Send <- out:
 			if c.UserID != evt.UserID {
 				go func(uid int64) {
-					_ = h.messageUC.UpdateDeliveryState(context.Background(), evt.RoomID, uid, msgID)
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					if err := h.messageUC.UpdateDeliveryState(ctx, evt.RoomID, uid, msgID); err != nil {
+						slog.Error(
+							"failed to update delivery state",
+							"error", err,
+							"user_id", uid,
+							"room_id", evt.RoomID,
+						)
+					}
 				}(c.UserID)
 			}
 		default:
-			log.Printf("Send buffer full for user %d", c.UserID)
+			h.log.Warn("send buffer full for user", "user_id", c.UserID)
 		}
 	}
 
@@ -148,11 +142,9 @@ func (h *Hub) handleMessage(evt Event) {
 }
 
 func (h *Hub) handleRead(evt Event) {
-	dbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	err := h.messageUC.UpdateReadState(dbCtx, evt.RoomID, evt.UserID, evt.ReadUpToID)
+	err := h.messageUC.UpdateReadState(evt.Context, evt.RoomID, evt.UserID, evt.ReadUpToID)
 	if err != nil {
+		h.log.Error("failed to update read state", "error", err)
 		return
 	}
 
@@ -176,11 +168,15 @@ func (h *Hub) handleRead(evt Event) {
 }
 
 func (h *Hub) handleResync(evt Event) {
-	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	state, err := h.messageUC.GetChatState(evt.Context, evt.RoomID, evt.UserID)
+	if err != nil {
+		h.log.Error("resync: failed to get chat state", "error", err)
+	}
 
-	state, _ := h.messageUC.GetChatState(dbCtx, evt.RoomID, evt.UserID)
-	msgs, _ := h.messageUC.GetAfter(dbCtx, evt.RoomID, evt.LastRecvID, 100)
+	msgs, err := h.messageUC.GetAfter(evt.Context, evt.RoomID, evt.LastRecvID, 100)
+	if err != nil {
+		h.log.Error("resync: failed to get messages after", "error", err)
+	}
 
 	for _, m := range msgs {
 		trySend(evt.Client, OutgoingMessage{

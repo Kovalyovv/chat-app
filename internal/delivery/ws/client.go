@@ -1,7 +1,8 @@
 package ws
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,21 +21,21 @@ type Client struct {
 	Hub    *Hub
 	Conn   *websocket.Conn
 	Send   chan OutgoingMessage
+	log    *slog.Logger
 }
 
-func NewClient(userID, roomID int64, conn *websocket.Conn, hub *Hub) *Client {
+func NewClient(userID, roomID int64, conn *websocket.Conn, hub *Hub, logger *slog.Logger) *Client {
 	return &Client{
 		UserID: userID,
 		RoomID: roomID,
 		Hub:    hub,
 		Conn:   conn,
 		Send:   make(chan OutgoingMessage, 1024),
+		log:    logger,
 	}
 }
 
-// ===================== read =====================
-
-func (c *Client) ReadPump() {
+func (c *Client) ReadPump(ctx context.Context) {
 	defer func() {
 		c.Hub.Unregister(c)
 		_ = c.Conn.Close()
@@ -55,9 +56,15 @@ func (c *Client) ReadPump() {
 				websocket.CloseGoingAway,
 				websocket.CloseAbnormalClosure,
 			) {
-				log.Println("ws read error:", err)
+				c.log.Warn("ws read error", "error", err)
 			}
 			return
+		}
+		event := Event{
+			Client:  c,
+			RoomID:  c.RoomID,
+			UserID:  c.UserID,
+			Context: ctx,
 		}
 
 		switch msg.Type {
@@ -65,57 +72,39 @@ func (c *Client) ReadPump() {
 		case MsgSend:
 			p, err := DecodePayload[SendPayload](msg)
 			if err != nil {
-				log.Println("decode send payload:", err)
+				c.log.Warn("decode send payload failed", "error", err)
 				continue
 			}
-
-			c.Hub.Events <- Event{
-				Type:        EventMessage,
-				Text:        p.Text,
-				ClientMsgID: p.ClientMsgID,
-				Client:      c,
-				RoomID:      c.RoomID,
-				UserID:      c.UserID,
-			}
+			event.Type = EventMessage
+			event.Text = p.Text
+			event.ClientMsgID = p.ClientMsgID
 
 		case MsgRead:
 			p, err := DecodePayload[ReadPayload](msg)
 			if err != nil {
-				log.Println("decode read payload:", err)
+				c.log.Warn("decode read payload failed", "error", err)
 				continue
 			}
-
-			c.Hub.Events <- Event{
-				Type:       EventRead,
-				ReadUpToID: p.UpToMessageID,
-				Client:     c,
-				RoomID:     c.RoomID,
-				UserID:     c.UserID,
-			}
+			event.Type = EventRead
+			event.ReadUpToID = p.UpToMessageID
 
 		case MsgResync:
 			p, err := DecodePayload[ResyncPayload](msg)
 			if err != nil {
-				log.Println("decode resync payload:", err)
+				c.log.Warn("decode resync payload failed", "error", err)
 				continue
 			}
-
-			c.Hub.Events <- Event{
-				Type:       EventResync,
-				RoomID:     c.RoomID,
-				UserID:     c.UserID,
-				ReadUpToID: p.ReadUpToMessageID,
-				LastRecvID: p.LastRecvMessageID,
-				Client:     c,
-			}
+			event.Type = EventResync
+			event.ReadUpToID = p.ReadUpToMessageID
+			event.LastRecvID = p.LastRecvMessageID
 
 		default:
-			log.Println("unknown ws message type:", msg.Type)
+			c.log.Warn("unknown ws message type", "type", msg.Type)
+			continue
 		}
+		c.Hub.Events <- event
 	}
 }
-
-// ===================== write =====================
 
 func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
@@ -134,12 +123,14 @@ func (c *Client) WritePump() {
 			}
 
 			if err := c.Conn.WriteJSON(msg); err != nil {
+				c.log.Warn("ws write error", "error", err)
 				return
 			}
 
 		case <-ticker.C:
 			_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				c.log.Warn("ws ping error", "error", err)
 				return
 			}
 		}
