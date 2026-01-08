@@ -3,19 +3,18 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
 	"github.com/Kovalyovv/chat-app/internal/config"
 	httpDelivery "github.com/Kovalyovv/chat-app/internal/delivery/http"
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
 	"github.com/Kovalyovv/chat-app/internal/middleware"
 	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 func main() {
@@ -40,7 +39,9 @@ func main() {
 
 	go hub.Run(ctx)
 
-	authMW := middleware.NewAuthMiddleware(cfg.AuthService.Addr, logger)
+	authMW, authConn := middleware.NewAuthMiddleware(cfg.AuthService.Addr, logger)
+	defer authConn.Close()
+
 	srv := httpDelivery.NewServer(cfg, roomUC, messageUC, authMW, logger, hub)
 
 	go func() {

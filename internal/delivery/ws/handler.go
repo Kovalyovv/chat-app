@@ -77,23 +77,31 @@ func (h *WSHandler) Handle(c *gin.Context) {
 
 	go client.WritePump()
 
-	go func() {
-		history, err := h.MessageUC.History(c.Request.Context(), roomID, 50)
-		if err != nil {
-			h.log.Error("failed to fetch message history", "room_id", roomID, "error", err)
-			return
-		}
-		for i := len(history) - 1; i >= 0; i-- {
-			client.Send <- OutgoingMessage{
-				Type:      MsgHistory,
-				UserID:    history[i].UserID,
-				MessageID: history[i].ID,
-				RoomID:    roomID,
-				Payload:   history[i].Text,
-				Timestamp: history[i].CreatedAt.Unix(),
-			}
-		}
-	}()
+	go h.sendHistory(c.Request.Context(), client, roomID)
 
 	client.ReadPump(c.Request.Context())
+}
+
+func (h *WSHandler) sendHistory(ctx context.Context, client *Client, roomID int64) {
+	history, err := h.MessageUC.History(ctx, roomID, 50)
+	if err != nil {
+		h.log.Error("failed to fetch message history", "room_id", roomID, "error", err)
+		return
+	}
+
+	for i := len(history) - 1; i >= 0; i-- {
+		select {
+		case client.Send <- OutgoingMessage{
+			Type:      MsgHistory,
+			UserID:    history[i].UserID,
+			MessageID: history[i].ID,
+			RoomID:    roomID,
+			Payload:   history[i].Text,
+			Timestamp: history[i].CreatedAt.Unix(),
+		}:
+		case <-ctx.Done():
+			h.log.Warn("client disconnected while sending history", "room_id", roomID)
+			return
+		}
+	}
 }

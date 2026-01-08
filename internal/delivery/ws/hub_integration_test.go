@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -86,7 +88,9 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 	roomUC := usecase.NewRoomUseCase(roomRepo)
 	messageUC := usecase.NewMessageUseCase(messageRepo, chatStateRepo)
 
-	hub := ws.NewHub(messageUC)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	hub := ws.NewHub(messageUC, logger)
 	hubCtx, cancelHub := context.WithCancel(context.Background())
 	defer cancelHub()
 	go hub.Run(hubCtx)
@@ -102,7 +106,7 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 		c.Next()
 	}
 
-	wsHandler := ws.NewWSHandler(hub, roomUC, messageUC)
+	wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, logger)
 	api := router.Group("/api/v1")
 	api.GET("/ws/:roomId", authMW, wsHandler.Handle)
 

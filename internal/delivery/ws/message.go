@@ -5,14 +5,10 @@ import (
 	"errors"
 )
 
-// ===================== incoming =====================
-
 type IncomingMessage struct {
 	Type    MessageType     `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
-
-// Client -> Server payloads
 
 type SendPayload struct {
 	Text        string `json:"text"`
@@ -28,8 +24,6 @@ type ResyncPayload struct {
 	ReadUpToMessageID int64 `json:"read_up_to_message_id"`
 }
 
-// ===================== outgoing =====================
-
 type OutgoingMessage struct {
 	Type        MessageType `json:"type"`
 	RoomID      int64       `json:"room_id,omitempty"`
@@ -38,21 +32,6 @@ type OutgoingMessage struct {
 	ClientMsgID string      `json:"client_msg_id,omitempty"`
 	Payload     any         `json:"payload,omitempty"`
 	Timestamp   int64       `json:"ts"`
-}
-
-// ===================== decoding helpers =====================
-
-func DecodeIncoming(data []byte) (IncomingMessage, error) {
-	var msg IncomingMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return msg, err
-	}
-
-	if msg.Type == 0 {
-		return msg, errors.New("missing message type")
-	}
-
-	return msg, nil
 }
 
 func DecodePayload[T any](msg IncomingMessage) (T, error) {
