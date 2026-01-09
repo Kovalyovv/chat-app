@@ -4,23 +4,42 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
-	"github.com/Kovalyovv/chat-app/internal/config"
+	conf "github.com/Kovalyovv/chat-app/internal/config"
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
 func NewServer(
-	cfg *config.Config,
+	cfg *conf.Config,
 	roomUC *usecase.RoomUseCase,
 	messageUC *usecase.MessageUseCase,
 	authMW gin.HandlerFunc,
 	logger *slog.Logger,
 	hub *ws.Hub,
 ) *http.Server {
-	router := gin.New()
-	router.Use(gin.Recovery())
+	router := gin.Default()
+
+	config := cors.DefaultConfig()
+	config.AllowCredentials = true
+	config.AllowOriginFunc = func(origin string) bool {
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		hostname := strings.Trim(u.Hostname(), "[]")
+		return (hostname == "localhost" || hostname == "0.0.0.0" || hostname == "127.0.0.1" || hostname == "::1") && u.Port() == "9000"
+	}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	config.MaxAge = 12 * time.Hour
+
+	router.Use(cors.New(config))
 
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "chat-service running"})

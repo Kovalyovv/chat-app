@@ -93,12 +93,13 @@ func (h *Hub) handleMessage(evt Event) {
 	}
 
 	out := OutgoingMessage{
-		Type:      MsgMessage,
-		MessageID: msgID,
-		UserID:    evt.UserID,
-		RoomID:    evt.RoomID,
-		Payload:   evt.Text,
-		Timestamp: time.Now().Unix(),
+		Type:        MsgMessage,
+		MessageID:   msgID,
+		UserID:      evt.UserID,
+		RoomID:      evt.RoomID,
+		Payload:     evt.Text,
+		ClientMsgID: evt.ClientMsgID,
+		Timestamp:   time.Now().Unix(),
 	}
 
 	h.mu.RLock()
