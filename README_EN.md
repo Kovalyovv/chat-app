@@ -10,7 +10,7 @@ This project is the backend service for a real-time, room-based chat application
 A brief demonstration of the simple web UI interacting with the backend services.
 
 
-![Chat App Demo](example.mp4)
+![Chat App Demo](example.webm)
 
 ## Core Features
 
