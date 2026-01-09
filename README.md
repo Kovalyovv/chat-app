@@ -9,8 +9,7 @@
 
 Краткая демонстрация простого веб-интерфейса, взаимодействующего с серверными службами.
 
-![Демонстрация чат-приложения]
-[example.webm](https://github.com/user-attachments/assets/023e6b6f-066b-45f9-a81c-ad7af0ec8417)
+[Демонстрация чат-приложения](https://github.com/user-attachments/assets/023e6b6f-066b-45f9-a81c-ad7af0ec8417)
 
 ## Основные функции
 
