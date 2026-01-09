@@ -1,4 +1,4 @@
-# Приложение для чата в реальном времени (chat-app)
+## Микросервис чата в реальном времени
 
 [![Версия Go](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
 [![Лицензия: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
