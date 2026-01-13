@@ -90,14 +90,15 @@ func (h *WSHandler) sendHistory(ctx context.Context, client *Client, roomID int6
 	}
 
 	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
 		select {
 		case client.Send <- OutgoingMessage{
 			Type:      MsgHistory,
-			UserID:    history[i].UserID,
-			MessageID: history[i].ID,
+			UserID:    msg.UserID,
+			MessageID: msg.ID,
 			RoomID:    roomID,
-			Payload:   history[i].Text,
-			Timestamp: history[i].CreatedAt.Unix(),
+			Payload:   msg,
+			Timestamp: msg.CreatedAt.Unix(),
 		}:
 		case <-ctx.Done():
 			h.log.Warn("client disconnected while sending history", "room_id", roomID)

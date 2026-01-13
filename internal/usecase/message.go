@@ -15,12 +15,8 @@ func NewMessageUseCase(mRepo MessageRepository, sRepo ChatStateRepository) *Mess
 	return &MessageUseCase{messageRepo: mRepo, chatStateRepo: sRepo}
 }
 
-func (uc *MessageUseCase) Save(
-	ctx context.Context,
-	roomID, userID int64,
-	text string,
-) (int64, error) {
-	return uc.messageRepo.Save(ctx, roomID, userID, text)
+func (uc *MessageUseCase) Save(ctx context.Context, msg *domain.Message) (int64, error) {
+	return uc.messageRepo.Save(ctx, msg)
 }
 
 func (uc *MessageUseCase) History(ctx context.Context, roomID int64, limit int) ([]domain.Message, error) {

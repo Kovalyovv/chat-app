@@ -16,7 +16,8 @@ type Config struct {
 	AuthService struct {
 		Addr string
 	}
-	GinMode string
+	GinMode        string
+	InternalAPIKey string
 }
 
 func NewFromEnv() *Config {
@@ -32,7 +33,8 @@ func NewFromEnv() *Config {
 		AuthService: struct{ Addr string }{
 			Addr: os.Getenv("AUTH_SERVICE_ADDR"),
 		},
-		GinMode: os.Getenv("GIN_MODE"),
+		GinMode:        os.Getenv("GIN_MODE"),
+		InternalAPIKey: os.Getenv("INTERNAL_API_KEY"),
 	}
 
 	if cfg.API.Port == "" {

@@ -40,7 +40,7 @@
 
 ## Стек технологий
 
-- ** Язык интерфейса:** Go (Golang)
+- **Язык интерфейса:** Go (Golang)
 - **Платформа API:** [Gin](https://github.com/gin-gonic/gin) для HTTP-сервера.
 -   **Связь в реальном времени:** [Gorilla WebSocket](https://github.com/gorilla/websocket) для подключения через WebSocket.
 -   **База данных:** PostgreSQL, доступ к которой осуществляется через драйвер [pgx/v5](https://github.com/jackc/pgx).

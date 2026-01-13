@@ -15,7 +15,7 @@ type RoomRepository interface {
 }
 
 type MessageRepository interface {
-	Save(ctx context.Context, roomID, userID int64, text string) (int64, error)
+	Save(ctx context.Context, msg *domain.Message) (int64, error)
 	GetLast(ctx context.Context, roomID int64, limit int) ([]domain.Message, error)
 	GetAfter(ctx context.Context, roomID int64, afterID int64, limit int) ([]domain.Message, error)
 }
