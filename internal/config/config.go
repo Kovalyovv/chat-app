@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -18,10 +19,16 @@ type Config struct {
 	}
 	GinMode        string
 	InternalAPIKey string
+	HistoryLimit   int
 }
 
 func NewFromEnv() *Config {
 	_ = godotenv.Load()
+
+	historyLimit, _ := strconv.Atoi(os.Getenv("HISTORY_LIMIT"))
+	if historyLimit <= 0 {
+		historyLimit = 50 // Default value
+	}
 
 	cfg := &Config{
 		API: struct{ Port string }{
@@ -35,6 +42,7 @@ func NewFromEnv() *Config {
 		},
 		GinMode:        os.Getenv("GIN_MODE"),
 		InternalAPIKey: os.Getenv("INTERNAL_API_KEY"),
+		HistoryLimit:   historyLimit,
 	}
 
 	if cfg.API.Port == "" {

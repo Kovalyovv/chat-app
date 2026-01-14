@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Kovalyovv/chat-app/internal/domain"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -17,27 +16,21 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-type RoomUseCase interface {
-	IsUserInRoom(ctx context.Context, userID, roomID int64) (bool, error)
-}
-
-type MessageUseCase interface {
-	History(ctx context.Context, roomID int64, limit int) ([]domain.Message, error)
-}
-
 type WSHandler struct {
-	Hub       *Hub
-	RoomUC    RoomUseCase
-	MessageUC MessageUseCase
-	log       *slog.Logger
+	Hub          *Hub
+	RoomUC       HandlerRoomUseCase
+	MessageUC    HandlerMessageUseCase
+	historyLimit int
+	log          *slog.Logger
 }
 
-func NewWSHandler(hub *Hub, roomUC RoomUseCase, messageUC MessageUseCase, logger *slog.Logger) *WSHandler {
+func NewWSHandler(hub *Hub, roomUC HandlerRoomUseCase, messageUC HandlerMessageUseCase, historyLimit int, logger *slog.Logger) *WSHandler {
 	return &WSHandler{
-		Hub:       hub,
-		RoomUC:    roomUC,
-		MessageUC: messageUC,
-		log:       logger,
+		Hub:          hub,
+		RoomUC:       roomUC,
+		MessageUC:    messageUC,
+		historyLimit: historyLimit,
+		log:          logger,
 	}
 }
 
@@ -83,7 +76,7 @@ func (h *WSHandler) Handle(c *gin.Context) {
 }
 
 func (h *WSHandler) sendHistory(ctx context.Context, client *Client, roomID int64) {
-	history, err := h.MessageUC.History(ctx, roomID, 50)
+	history, err := h.MessageUC.History(ctx, roomID, h.historyLimit)
 	if err != nil {
 		h.log.Error("failed to fetch message history", "room_id", roomID, "error", err)
 		return

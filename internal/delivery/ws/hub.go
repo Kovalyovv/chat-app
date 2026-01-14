@@ -8,27 +8,42 @@ import (
 	"time"
 
 	"github.com/Kovalyovv/chat-app/internal/domain"
-	"github.com/Kovalyovv/chat-app/internal/usecase"
+)
+
+const (
+	numDeliveryWorkers    = 20
+	deliveryJobBufferSize = 1024
 )
 
 type Hub struct {
-	mu            sync.RWMutex
-	clientsByRoom map[int64]map[*Client]struct{}
-	clientsByUser map[int64]map[*Client]struct{}
-	roomSenders   map[int64]map[int64]struct{}
-	Events        chan Event
-	messageUC     *usecase.MessageUseCase
-	log           *slog.Logger
+	mu             sync.RWMutex
+	clientsByRoom  map[int64]map[*Client]struct{}
+	clientsByUser  map[int64]map[*Client]struct{}
+	roomSenders    map[int64]map[int64]struct{}
+	Events         chan Event
+	messageUC      HubMessageUseCase
+	systemMessages <-chan *domain.Message
+	deliveryJobs   chan deliveryJob
+	log            *slog.Logger
 }
 
-func NewHub(messageUC *usecase.MessageUseCase, logger *slog.Logger) *Hub {
+type deliveryJob struct {
+	ctx         context.Context
+	roomID      int64
+	recipientID int64
+	messageID   int64
+}
+
+func NewHub(messageUC HubMessageUseCase, systemMessages <-chan *domain.Message, logger *slog.Logger) *Hub {
 	return &Hub{
-		clientsByRoom: make(map[int64]map[*Client]struct{}),
-		clientsByUser: make(map[int64]map[*Client]struct{}),
-		roomSenders:   make(map[int64]map[int64]struct{}),
-		Events:        make(chan Event, 1024),
-		messageUC:     messageUC,
-		log:           logger,
+		clientsByRoom:  make(map[int64]map[*Client]struct{}),
+		clientsByUser:  make(map[int64]map[*Client]struct{}),
+		roomSenders:    make(map[int64]map[int64]struct{}),
+		Events:         make(chan Event, 1024),
+		messageUC:      messageUC,
+		systemMessages: systemMessages,
+		deliveryJobs:   make(chan deliveryJob, deliveryJobBufferSize),
+		log:            logger,
 	}
 }
 
@@ -68,6 +83,10 @@ func (h *Hub) Unregister(c *Client) {
 
 func (h *Hub) Run(ctx context.Context) {
 	h.log.Info("hub started")
+	for i := 0; i < numDeliveryWorkers; i++ {
+		go h.deliveryWorker(ctx, i)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -82,40 +101,31 @@ func (h *Hub) Run(ctx context.Context) {
 			case EventResync:
 				go h.handleResync(evt)
 			}
+		case msg := <-h.systemMessages:
+			h.log.Info("received system message from bus", "room_id", msg.RoomID, "type", msg.Type)
+			go h.broadcastMessage(msg, "")
 		}
 	}
 }
 
-func (h *Hub) BroadcastSystemMessage(roomID int64, uploaderID int64, objectKey string) {
-	h.mu.RLock()
-	clients := snapshotClients(h.clientsByRoom[roomID])
-	h.mu.RUnlock()
-
-	if len(clients) == 0 {
-		h.log.Info("no active clients in room to broadcast system message", "room_id", roomID)
-		return
+func (h *Hub) deliveryWorker(ctx context.Context, id int) {
+	h.log.Info("delivery worker started", "id", id)
+	for {
+		select {
+		case <-ctx.Done():
+			h.log.Info("delivery worker stopped", "id", id)
+			return
+		case job := <-h.deliveryJobs:
+			if err := h.messageUC.UpdateDeliveryState(job.ctx, job.roomID, job.recipientID, job.messageID); err != nil {
+				h.log.Error(
+					"failed to update delivery state",
+					"error", err,
+					"recipient_id", job.recipientID,
+					"room_id", job.roomID,
+				)
+			}
+		}
 	}
-
-	msg := &domain.Message{
-		RoomID: roomID,
-		UserID: uploaderID,
-		Type:   "FILE",
-		Metadata: map[string]interface{}{
-			"object_key": objectKey,
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	msgID, err := h.messageUC.Save(ctx, msg)
-	if err != nil {
-		h.log.Error("failed to save system message", "error", err, "type", msg.Type, "uploader_id", uploaderID, "room_id", roomID)
-		return
-	}
-	msg.ID = msgID
-
-	h.broadcastMessage(msg, "")
 }
 
 func (h *Hub) broadcastMessage(msg *domain.Message, clientMsgID string) {
@@ -146,15 +156,12 @@ func (h *Hub) broadcastMessage(msg *domain.Message, clientMsgID string) {
 		select {
 		case c.Send <- out:
 			if c.UserID != msg.UserID {
-				go func(recipientID int64) {
-					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					defer cancel()
-					if err := h.messageUC.UpdateDeliveryState(ctx, msg.RoomID, recipientID, msg.ID); err != nil {
-						h.log.Error("failed to update delivery state", "error", err, "recipient_id", recipientID,
-							"room_id", msg.RoomID,
-						)
-					}
-				}(c.UserID)
+				h.deliveryJobs <- deliveryJob{
+					ctx:         context.Background(),
+					roomID:      msg.RoomID,
+					recipientID: c.UserID,
+					messageID:   msg.ID,
+				}
 			}
 		default:
 			h.log.Warn("send buffer full for user", "user_id", c.UserID)

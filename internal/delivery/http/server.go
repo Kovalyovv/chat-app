@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kovalyovv/chat-app/internal/bus"
 	conf "github.com/Kovalyovv/chat-app/internal/config"
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
 	"github.com/Kovalyovv/chat-app/internal/middleware"
@@ -23,6 +24,7 @@ func NewServer(
 	authMW gin.HandlerFunc,
 	logger *slog.Logger,
 	hub *ws.Hub,
+	eventBus *bus.EventBus,
 ) *http.Server {
 	router := gin.Default()
 
@@ -61,12 +63,12 @@ func NewServer(
 		internal := api.Group("/internal")
 		internal.Use(middleware.InternalAuthMiddleware(cfg.InternalAPIKey))
 
-		notifyHandler := NewNotificationHandler(hub, logger.With("handler", "notification"))
+		notifyHandler := NewNotificationHandler(messageUC, eventBus, logger.With("handler", "notification"))
 		internal.POST("/notify", notifyHandler.SendNotification)
 	}
 
 	{
-		wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, logger.With("handler", "ws"))
+		wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, cfg.HistoryLimit, logger.With("handler", "ws"))
 		wsGroup := api.Group("/ws")
 		wsGroup.Use(authMW)
 		wsGroup.GET("/:roomId", wsHandler.Handle)
