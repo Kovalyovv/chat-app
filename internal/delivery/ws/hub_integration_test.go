@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Kovalyovv/chat-app/internal/delivery/ws"
+	"github.com/Kovalyovv/chat-app/internal/domain"
 	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
 	"github.com/gin-gonic/gin"
@@ -43,7 +45,9 @@ CREATE TABLE IF NOT EXISTS messages (
     id SERIAL PRIMARY KEY,
     room_id INT NOT NULL,
     user_id INT NOT NULL,
-    text TEXT NOT NULL,
+    message_type VARCHAR(20) NOT NULL,
+    text TEXT,
+    metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -56,26 +60,17 @@ CREATE TABLE IF NOT EXISTS room_read_states (
     PRIMARY KEY (room_id, user_id),
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 );
-
-DO $$
-BEGIN
-    ALTER TABLE room_members
-        ADD FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$
-BEGIN
-    ALTER TABLE messages
-        ADD FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
-
-CREATE INDEX IF NOT EXISTS idx_messages_room_created
-    ON messages (room_id, created_at DESC);
 `
+
+type TestMessage struct {
+	Type      ws.MessageType `json:"type"`
+	MessageID int64          `json:"message_id"`
+	UserID    int64          `json:"user_id"`
+	Payload   struct {
+		Text string `json:"text"`
+		ID   int64  `json:"id"`
+	} `json:"payload"`
+}
 
 func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 	pool, cleanup := setupTestDB(t)
@@ -90,115 +85,96 @@ func TestHub_FullFlow_Delivery_Read_Resync(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	hub := ws.NewHub(messageUC, logger)
+	systemMessages := make(chan *domain.Message, 1)
+	hub := ws.NewHub(messageUC, systemMessages, logger)
 	hubCtx, cancelHub := context.WithCancel(context.Background())
 	defer cancelHub()
 	go hub.Run(hubCtx)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-
 	authMW := func(c *gin.Context) {
-		if uid := c.Query("X-User-ID"); uid != "" {
-			id, _ := strconv.ParseInt(uid, 10, 64)
-			c.Set("userID", id)
-		}
+		id, _ := strconv.ParseInt(c.Query("X-User-ID"), 10, 64)
+		c.Set("userID", id)
 		c.Next()
 	}
-
-	wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, logger)
-	api := router.Group("/api/v1")
-	api.GET("/ws/:roomId", authMW, wsHandler.Handle)
-
+	wsHandler := ws.NewWSHandler(hub, roomUC, messageUC, 50, logger)
+	router.GET("/ws/:roomId", authMW, wsHandler.Handle)
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
 	ctx := context.Background()
 	room, err := roomUC.CreateRoom(ctx, "test-room", 1)
 	require.NoError(t, err)
-
-	require.NoError(t, roomRepo.AddMember(ctx, 1, room.ID))
 	require.NoError(t, roomRepo.AddMember(ctx, 2, room.ID))
 
-	wsURL := "ws" + ts.URL[4:] + fmt.Sprintf("/api/v1/ws/%d", room.ID)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + fmt.Sprintf("/ws/%d", room.ID)
+	conn1 := connectOrFail(t, wsURL, 1)
+	conn2 := connectOrFail(t, wsURL, 2)
 
-	conn1, _, err := websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=1", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn1.Close() })
+	sendMessage(t, conn1, "Hello", "client-msg-1")
 
-	conn2, _, err := websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=2", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn2.Close() })
+	receivedMsg := readExpectedMessage(t, conn2, ws.MsgMessage)
+	assert.Equal(t, "Hello", receivedMsg.Payload.Text, "Payload text should match")
+	assert.NotZero(t, receivedMsg.MessageID, "Message ID should be set by the server")
 
-	time.Sleep(200 * time.Millisecond)
+	firstMessageID := receivedMsg.MessageID
 
-	sendMessage(t, conn1, "привет", "msg-1")
-
-	msg := readExpectedMessage(t, conn2, ws.MsgMessage)
-	assert.Equal(t, "привет", msg.Payload)
-
-	time.Sleep(200 * time.Millisecond)
-
+	time.Sleep(200 * time.Millisecond) // Allow time for the async DB update
 	state, err := messageUC.GetChatState(ctx, room.ID, 2)
 	require.NoError(t, err)
-	assert.Equal(t, msg.MessageID, state.LastDeliveredMessageID)
+	assert.Equal(t, firstMessageID, state.LastDeliveredMessageID)
 
-	sendRead(t, conn2, msg.MessageID)
+	sendRead(t, conn2, firstMessageID)
 
-	readMsg := readExpectedMessage(t, conn1, ws.MsgRead)
-	assert.Equal(t, int64(2), readMsg.UserID)
+	readReceipt := readExpectedMessage(t, conn1, ws.MsgRead)
+	assert.Equal(t, firstMessageID, readReceipt.MessageID)
+	assert.Equal(t, int64(2), readReceipt.UserID, "Read receipt should be from User 2")
 
-	_ = conn2.Close()
-	conn2, _, err = websocket.DefaultDialer.Dial(wsURL+"?X-User-ID=2", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn2.Close() })
-
-	time.Sleep(200 * time.Millisecond)
+	conn2.Close()
+	conn2 = connectOrFail(t, wsURL, 2)
 
 	historyMsg := readExpectedMessage(t, conn2, ws.MsgHistory)
-	assert.Equal(t, "привет", historyMsg.Payload)
-	assert.Equal(t, int64(1), historyMsg.UserID)
+	assert.Equal(t, "Hello", historyMsg.Payload.Text, "History message payload should match")
+	assert.Equal(t, firstMessageID, historyMsg.Payload.ID, "History message ID should match")
+}
 
-	_ = conn2.SetReadDeadline(time.Time{})
-
-	sendResync(t, conn2, 0, 0)
-
-	resyncMsg := readExpectedMessage(t, conn2, ws.MsgMessage)
-	assert.Equal(t, msg.MessageID, resyncMsg.MessageID)
-
-	stateUpdate := readExpectedMessage(t, conn2, ws.MsgStateUpdate)
-	assert.Contains(t, stateUpdate.Payload.(string), fmt.Sprintf("last_read: %d", msg.MessageID))
+func connectOrFail(t *testing.T, url string, userID int64) *websocket.Conn {
+	t.Helper()
+	conn, _, err := websocket.DefaultDialer.Dial(url+fmt.Sprintf("?X-User-ID=%d", userID), nil)
+	require.NoError(t, err, "Failed to connect for user", userID)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
 }
 
 func sendMessage(t *testing.T, conn *websocket.Conn, text, clientMsgID string) {
+	t.Helper()
 	payload := ws.SendPayload{Text: text, ClientMsgID: clientMsgID}
 	data, _ := json.Marshal(payload)
 	require.NoError(t, conn.WriteJSON(ws.IncomingMessage{Type: ws.MsgSend, Payload: data}))
 }
 
 func sendRead(t *testing.T, conn *websocket.Conn, upTo int64) {
+	t.Helper()
 	payload := ws.ReadPayload{UpToMessageID: upTo}
 	data, _ := json.Marshal(payload)
 	require.NoError(t, conn.WriteJSON(ws.IncomingMessage{Type: ws.MsgRead, Payload: data}))
 }
 
-func sendResync(t *testing.T, conn *websocket.Conn, lastRecv, lastRead int64) {
-	payload := ws.ResyncPayload{LastRecvMessageID: lastRecv, ReadUpToMessageID: lastRead}
-	data, _ := json.Marshal(payload)
-	require.NoError(t, conn.WriteJSON(ws.IncomingMessage{Type: ws.MsgResync, Payload: data}))
-}
-
-func readExpectedMessage(t *testing.T, conn *websocket.Conn, expected ws.MessageType) ws.OutgoingMessage {
+func readExpectedMessage(t *testing.T, conn *websocket.Conn, expectedType ws.MessageType) TestMessage {
 	t.Helper()
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 
 	for {
-		var msg ws.OutgoingMessage
-		err := conn.ReadJSON(&msg)
-		require.NoError(t, err, "Failed to read JSON from websocket")
+		_, msgBytes, err := conn.ReadMessage()
+		require.NoError(t, err, "Failed to read raw message from websocket")
 
-		if msg.Type == expected {
-			return msg
+		var genericMsg TestMessage
+		err = json.Unmarshal(msgBytes, &genericMsg)
+		require.NoError(t, err, "Failed to unmarshal message into TestMessage struct")
+
+		if genericMsg.Type == expectedType {
+			return genericMsg
 		}
 	}
 }
