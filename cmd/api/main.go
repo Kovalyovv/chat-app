@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Kovalyovv/auth-service/pkg/observability"
 	"github.com/Kovalyovv/chat-app/internal/bus"
 	"github.com/Kovalyovv/chat-app/internal/config"
 	httpDelivery "github.com/Kovalyovv/chat-app/internal/delivery/http"
@@ -18,9 +19,25 @@ import (
 	"github.com/Kovalyovv/chat-app/internal/middleware"
 	"github.com/Kovalyovv/chat-app/internal/repository/postgres"
 	"github.com/Kovalyovv/chat-app/internal/usecase"
+	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
+const serviceName = "chat-app"
+
 func main() {
+	tp, err := observability.InitTracer(serviceName, "jaeger:4317")
+	if err != nil {
+		slog.Error("failed to initialize tracer", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			slog.Error("failed to shutdown tracer", "error", err)
+		}
+	}()
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	cfg := config.NewFromEnv()
@@ -57,9 +74,21 @@ func main() {
 	go hub.Run(ctx)
 
 	authMW, authConn := middleware.NewAuthMiddleware(cfg.AuthService.Addr, logger)
-	defer authConn.Close()
+	if authConn != nil {
+		defer authConn.Close()
+	}
 
-	srv := httpDelivery.NewServer(cfg, roomUC, messageUC, authMW, logger, hub, eventBus)
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(otelgin.Middleware(serviceName))
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	httpDelivery.SetupRoutes(router, cfg, roomUC, messageUC, authMW, logger, hub, eventBus)
+
+	srv := &http.Server{
+		Addr:    ":" + cfg.API.Port,
+		Handler: router,
+	}
 
 	go func() {
 		slog.Info("starting HTTP server", "addr", srv.Addr)

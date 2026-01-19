@@ -9,6 +9,7 @@ import (
 
 	"github.com/Kovalyovv/auth-service/pkg/pb"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -18,6 +19,7 @@ import (
 func NewAuthMiddleware(authServiceAddr string, logger *slog.Logger) (gin.HandlerFunc, *grpc.ClientConn) {
 	conn, err := grpc.Dial(
 		authServiceAddr,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff: backoff.Config{

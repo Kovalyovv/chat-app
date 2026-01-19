@@ -1,7 +1,6 @@
 package http
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -17,7 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func NewServer(
+func SetupRoutes(
+	router *gin.Engine,
 	cfg *conf.Config,
 	roomUC *usecase.RoomUseCase,
 	messageUC *usecase.MessageUseCase,
@@ -25,9 +25,7 @@ func NewServer(
 	logger *slog.Logger,
 	hub *ws.Hub,
 	eventBus *bus.EventBus,
-) *http.Server {
-	router := gin.Default()
-
+) {
 	config := cors.DefaultConfig()
 	config.AllowCredentials = true
 	config.AllowOriginFunc = func(origin string) bool {
@@ -73,7 +71,4 @@ func NewServer(
 		wsGroup.Use(authMW)
 		wsGroup.GET("/:roomId", wsHandler.Handle)
 	}
-
-	addr := fmt.Sprintf(":%s", cfg.API.Port)
-	return &http.Server{Addr: addr, Handler: router}
 }

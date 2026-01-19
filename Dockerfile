@@ -1,28 +1,18 @@
-# Dockerfile
-
-# --- Этап 1: Сборка ---
-
-FROM golang:1.25-alpine AS builder
-
+FROM golang:1.25.5-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
+
+RUN go mod edit -dropreplace=github.com/Kovalyovv/auth-service
+
+RUN go mod tidy
 
 RUN go mod download
 
 COPY . .
 
-# Собираем приложение.
-# CGO_ENABLED=0 - отключает CGO, чтобы получить статически скомпилированный бинарник
-# -o ./out/app - бинарник будет лежать в папке /app/out/app
-RUN CGO_ENABLED=0 GOOS=linux go build -o ./out/app ./cmd/api/main.go
+RUN CGO_ENABLED=0 go build -o /server/ ./cmd/...
 
-# --- Этап 2: Финальный образ ---
-# Используем минимальный образ Alpine Linux
-FROM alpine:latest
+FROM gcr.io/distroless/static-debian11
 
-WORKDIR /root/
-
-COPY --from=builder /app/out/app .
-
-CMD ["./app"]
+COPY --from=builder /server /server
