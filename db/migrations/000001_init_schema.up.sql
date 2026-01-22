@@ -1,61 +1,38 @@
-create table rooms
+
+CREATE TABLE rooms
 (
-    id          serial
-        primary key,
-    name        varchar(255)                           not null,
-    invite_code varchar(16)                            not null
-        unique,
-    owner_id    integer                                not null,
-    created_at  timestamp with time zone default now() not null
+    id          SERIAL PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    invite_code VARCHAR(16)  NOT NULL UNIQUE,
+    owner_id    INTEGER      NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
-alter table rooms
-    owner to postgres;
-
-create table room_members
+CREATE TABLE room_members
 (
-    user_id integer not null,
-    room_id integer not null
-        references rooms
-            on delete cascade,
-    primary key (user_id, room_id)
+    user_id INTEGER NOT NULL,
+    room_id INTEGER NOT NULL REFERENCES rooms ON DELETE CASCADE,
+    PRIMARY KEY (user_id, room_id)
 );
 
-alter table room_members
-    owner to postgres;
-
-create table messages
+CREATE TABLE messages
 (
-    id           bigserial
-        primary key,
-    text         text,
-    room_id      integer                                                    not null
-        references rooms
-            on delete cascade,
-    user_id      integer                                                    not null,
-    created_at   timestamp with time zone default now()                     not null,
-    message_type varchar(20)              default 'TEXT'::character varying not null,
-    metadata     jsonb
+    id           BIGSERIAL PRIMARY KEY,
+    room_id      INTEGER   NOT NULL REFERENCES rooms ON DELETE CASCADE,
+    user_id      INTEGER   NOT NULL,
+    message_type VARCHAR(20) NOT NULL,
+    text         TEXT,
+    metadata     JSONB,
+    created_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+CREATE INDEX messages_room_id_created_at_idx ON messages (room_id ASC, created_at DESC);
 
-alter table messages
-    owner to postgres;
-
-create index messages_room_id_created_at_idx
-    on messages (room_id asc, created_at desc);
-
-create table room_read_states
+CREATE TABLE room_read_states
 (
-    room_id                   integer                                not null
-        references rooms
-            on delete cascade,
-    user_id                   integer                                not null,
-    last_read_message_id      bigint                   default 0     not null,
-    updated_at                timestamp with time zone default now() not null,
-    last_delivered_message_id bigint                   default 0     not null,
-    primary key (room_id, user_id)
+    room_id                   INTEGER   NOT NULL REFERENCES rooms ON DELETE CASCADE,
+    user_id                   INTEGER   NOT NULL,
+    last_read_message_id      BIGINT    DEFAULT 0 NOT NULL,
+    last_delivered_message_id BIGINT    DEFAULT 0 NOT NULL,
+    updated_at                TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    PRIMARY KEY (room_id, user_id)
 );
-
-alter table room_read_states
-    owner to postgres;
-
