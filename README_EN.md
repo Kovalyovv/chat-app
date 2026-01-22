@@ -59,13 +59,15 @@ All endpoints are prefixed with `/api/v1`.
 
 ### Recommended Method: Docker Compose
 
-The easiest and recommended way to run the entire project is with Docker Compose. This will start this service, its database, and all other related services.
+The easiest and recommended way to run the entire project is with Docker Compose. This will start this service, its database, and all other related services, including Prometheus and Jaeger.
 
 1.  Navigate to the project's root directory.
 2.  Run the following command:
     ```bash
     docker compose up --build
     ```
+- **Jaeger UI:** Available at `http://localhost:16686`
+- **Prometheus UI:** Available at `http://localhost:9090`
 
 ### Local Development (Alternative)
 
@@ -85,6 +87,9 @@ The easiest and recommended way to run the entire project is with Docker Compose
 
     # Address of the running auth-service's gRPC server
     AUTH_SERVICE_ADDR=localhost:50001
+    
+    # Address of the Jaeger OTLP gRPC endpoint
+    JAEGER_URL=localhost:4317
 
     # A secret key to protect the internal notification endpoint
     INTERNAL_API_KEY=your-internal-api-key
