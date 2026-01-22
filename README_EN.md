@@ -11,9 +11,9 @@ This project is the backend for a real-time, room-based chat application. It is 
 
 This project consists of three core microservices that work together:
 
--   **[Auth Service](../auth-service/README.md):** Manages user identity. This chat service uses it to authenticate users connecting via WebSocket.
+-   **[Auth Service](../auth-service/README_EN.md):** Manages user identity. This chat service uses it to authenticate users connecting via WebSocket.
 -   **`chat-app` (This Service):** Provides real-time messaging, room management, and message history.
--   **[Media Processor](../media-processor/README.md):** Handles file uploads. After processing a file, it sends a notification back to this chat service to inform users in a room.
+-   **[Media Processor](../media-processor/README_EN.md):** Handles file uploads. After processing a file, it sends a notification back to this chat service to inform users in a room.
 
 ## Core Features
 
