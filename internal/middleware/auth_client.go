@@ -14,9 +14,16 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 func NewAuthMiddleware(authServiceAddr string, logger *slog.Logger) (gin.HandlerFunc, *grpc.ClientConn) {
+	var kasp = keepalive.ClientParameters{
+		Time:                10 * time.Second,
+		Timeout:             time.Second,
+		PermitWithoutStream: true,
+	}
+
 	conn, err := grpc.Dial(
 		authServiceAddr,
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
@@ -30,6 +37,7 @@ func NewAuthMiddleware(authServiceAddr string, logger *slog.Logger) (gin.Handler
 			},
 			MinConnectTimeout: 20 * time.Second,
 		}),
+		grpc.WithKeepaliveParams(kasp),
 	)
 
 	if err != nil {
@@ -41,9 +49,6 @@ func NewAuthMiddleware(authServiceAddr string, logger *slog.Logger) (gin.Handler
 	return func(c *gin.Context) {
 		var token string
 
-		// For WebSocket, the browser cannot send an Authorization header.
-		// So we check for the token in a query parameter first.
-		// The "Upgrade" header indicates a WebSocket connection attempt.
 		if c.GetHeader("Upgrade") == "websocket" {
 			token = c.Query("token")
 		}

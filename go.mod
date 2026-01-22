@@ -1,6 +1,6 @@
 module github.com/Kovalyovv/chat-app
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/Kovalyovv/auth-service v0.0.0-20260115184904-cccee4113365
