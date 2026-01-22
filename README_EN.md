@@ -31,6 +31,11 @@ This project consists of three core microservices that work together:
 -   **Database:** PostgreSQL, accessed via the [pgx/v5](https://github.com/jackc/pgx) driver.
 -   **Inter-Service Communication:** gRPC for authentication calls to the `auth-service`.
 -   **Logging:** `slog` (standard library) for structured logging.
+-   **Observability & Storage:**
+    -   **[Prometheus](https://prometheus.io/):** Exposes a `/metrics` endpoint for collecting application and business metrics.
+    -   **[Jaeger](https://www.jaegertracing.io/):** Fully integrated for distributed tracing, allowing you to monitor request flows across all microservices.
+    -   **[MinIO](https://min.io/):** Used as the S3-compatible object storage for all user-uploaded media files, managed by the `media-processor` service.
+
 
 ## API Endpoints
 
